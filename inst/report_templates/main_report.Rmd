@@ -1,0 +1,562 @@
+---
+title: "OncoImplexus Analysis Report: `r if(exists('sname')) sname else params$sample_name`"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    code_folding: hide
+    highlight: tango
+params:
+  data_file: "path/to/data.rds"
+  sample_name: "Sample"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 8)
+
+# Prevent DT/htmlwidgets from opening browser tabs
+options(DT.options = list(autoWidth = TRUE))
+options(viewer = NULL)
+options(browser = function(url) invisible(NULL))
+
+library(OncoImplexus)
+library(DT)
+library(kableExtra)
+library(ggplot2)
+library(circlize)
+
+# Load data - Supports both direct injection and file-based loading
+if (!exists("report_data")) {
+    if (file.exists(params$data_file)) {
+        report_data <- readRDS(params$data_file)
+    } else {
+        stop("No report data found via direct injection or file path: ", params$data_file)
+    }
+}
+
+res <- report_data$result
+sv <- report_data$SV.sample
+if (!is.null(sv) && !("sv_id" %in% colnames(sv))) {
+    sv$sv_id <- 1:nrow(sv)
+}
+cnv <- report_data$CNV.sample
+sname <- report_data$sample_name
+gen <- report_data$genome
+qc <- report_data$qc_metrics
+
+# Robust TxDb handling
+txdb <- NULL
+if (!is.null(report_data$txdb_name)) {
+  if (report_data$txdb_name == "provided_txdb") {
+    pkg <- if (gen == "hg19") "TxDb.Hsapiens.UCSC.hg19.knownGene" else "TxDb.Hsapiens.UCSC.hg38.knownGene"
+    if (requireNamespace(pkg, quietly = TRUE)) {
+      txdb <- get(pkg, envir = asNamespace(pkg))
+    }
+  } else if (requireNamespace(report_data$txdb_name, quietly = TRUE)) {
+    txdb <- get(report_data$txdb_name, envir = asNamespace(report_data$txdb_name))
+  }
+}
+
+# Failover logic for annotation data
+annot <- report_data$annotation
+if (is.null(annot)) {
+  if (!is.null(res$gene_annotations)) {
+    annot <- res$gene_annotations
+  } else if (!is.null(res$annotation)) {
+    annot <- res$annotation
+  }
+}
+
+# Repair mechanism data
+repair <- report_data$repair_mechanisms
+```
+
+# Executive Summary
+
+<div class="alert alert-info">
+**Overall Classification:** `r res$integrated_summary$overall_classification`
+</div>
+
+### Automated Findings Overview
+```{r narrative_summary, results="asis"}
+# 1. Gather stats
+n_ct <- sum(res$chromothripsis$classification$classification == "High confidence")
+n_cp <- res$chromoplexy$likely_chromoplexy
+n_cs <- res$chromoanasynthesis$likely_chromoanasynthesis
+
+# 2. Build summary sentence
+findings <- c()
+if (n_ct > 0) findings <- c(findings, sprintf("**%d high-confidence Chromothripsis** event(s)", n_ct))
+if (n_cp > 0) findings <- c(findings, sprintf("**%d likely Chromoplexy** chain(s)", n_cp))
+if (n_cs > 0) findings <- c(findings, sprintf("**%d likely Chromoanasynthesis** region(s)", n_cs))
+
+summary_text <- if (length(findings) > 0) {
+    paste0("In sample **", sname, "**, we identified ", paste(findings, collapse = ", "), ".")
+} else {
+    "No high-confidence catastrophic rearrangement events were detected in this sample."
+}
+
+cat(summary_text, " ")
+
+# 3. Add driver info if available
+if (!is.null(annot) && nrow(annot$driver_hits) > 0) {
+    drivers <- unique(annot$driver_hits$Gene)
+    cat(sprintf("Critical analysis reveals impact on key driver genes, including **%s**. ", 
+                paste(head(drivers, 3), collapse = ", ")))
+}
+
+# 4. Add fusion context if available
+if (!is.null(res$fusions) && any(res$fusions$orientation_compatible, na.rm=TRUE)) {
+    top_fusion <- res$fusions[which(res$fusions$orientation_compatible == TRUE)[1], ]
+    cat(sprintf("A highly potential fusion event, **%s**, was detected with a **%s** context, suggesting oncogenic potential. ", 
+                top_fusion$fusion_name, top_fusion$status))
+}
+
+# 5. Add repair mechanism context
+if (!is.null(repair)) {
+    cat(sprintf("The genomic background is dominated by **%s** repair signatures, with a median microhomology of %d bp.", 
+                repair$summary$dominant_mechanism, repair$summary$microhomology$median_length))
+}
+```
+
+This report summarizes the complex chromosomal rearrangements detected in **`r sname`**.
+
+```{r summary_table}
+sum_df <- res$integrated_summary
+# Transpose for better view
+sum_t <- data.frame(
+  Metric = c("Chromothripsis (High Conf)", "Chromothripsis (Low Conf)", 
+             "Chromoplexy (Likely)", "Chromoplexy (Possible)", 
+             "Chromoanasynthesis (Likely)", "Chromoanasynthesis (Possible)"),
+  Count = c(sum_df$chromothripsis_high_confidence, sum_df$chromothripsis_low_confidence,
+            sum_df$chromoplexy_likely, sum_df$chromoplexy_possible,
+            sum_df$chromoanasynthesis_likely, sum_df$chromoanasynthesis_possible)
+)
+
+sum_t$Count[is.na(sum_t$Count)] <- 0
+
+# Add color based on non-zero counts
+sum_t$Status <- ifelse(sum_t$Count > 0, "Detected", "Not Detected")
+
+kbl(sum_t, caption = "Summary of Detected Events") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+  row_spec(which(sum_t$Count > 0), bold = TRUE, color = "white", background = "#4CAF50")
+```
+
+# Genomic Landscape Dashboard
+
+This dashboard provides a multi-panel overview of structural variants, copy number profiles, and the distribution of detected chromoanagenesis events.
+
+```{r dashboard, fig.height=10, fig.width=12, fig.align="center"}
+tryCatch({
+    plot_genome_dashboard(
+        chromoanagenesis_result = res,
+        SV.sample = sv,
+        CNV.sample = cnv,
+        sample_name = sname,
+        genome = gen
+    )
+}, error = function(e) {
+    message("Dashboard visualization unavailable: ", e$message)
+})
+```
+
+# Genome-Wide Visualization
+
+This Circos plot integrates copy number variations (outer ring), detected chromoanagenesis regions (colored bands), and structural variant links.
+
+```{r circos_plot, fig.height=9, fig.width=9, fig.align="center"}
+tryCatch({
+    plot_chromoanagenesis_circos(
+        chromoanagenesis_result = res,
+        SV.sample = sv,
+        CNV.sample = cnv,
+        genome = gen,
+        sample_name = sname,
+        verbose = FALSE
+    )
+}, error = function(e) {
+    message("Error generating Circos plot: ", e$message)
+})
+```
+
+# Functional Impact & Biological Insights
+
+## 1. Driver Gene Impact
+Analysis of cancer driver genes potentially impacted by the detected mechanisms.
+
+```{r driver_genes}
+if (!is.null(annot) && nrow(annot$driver_hits) > 0) {
+  display_cols <- c("Gene", "Gene_Type", "Mechanism", "Impact_Type", "Mechanism_Consistency", "Region")
+  df_show <- annot$driver_hits[, display_cols, drop = FALSE]
+
+  datatable(df_show, 
+            options = list(pageLength = 10, dom = "Bfrtip", scrollX = TRUE),
+            filter = "top",
+            caption = "Impacted Cancer Driver Genes") %>%
+    formatStyle("Mechanism", 
+                backgroundColor = styleEqual(
+                  c("Chromothripsis", "Chromoplexy", "Chromoanasynthesis"), 
+                  c("#ffebee", "#e3f2fd", "#e8f5e9")
+                )) %>%
+    formatStyle("Mechanism_Consistency",
+                backgroundColor = styleEqual(
+                    c("Consistent (Oncogene Amp)", "Consistent (TSG Loss)", "Potential Fusion/Disruption", "Inconsistent (TSG Amp)"),
+                    c("#dcedc8", "#dcedc8", "#fff9c4", "#ffcdd2")
+                ))
+} else if (is.null(annot)) {
+  cat("Gene annotation was not performed (no gene database provided).")
+} else {
+  cat("No high-confidence driver gene impacts were detected.")
+}
+```
+
+<br>
+
+<div class="panel panel-info">
+<div class="panel-heading">
+<h4 class="panel-title">💡 Glossary: Mechanism Consistency</h4>
+</div>
+<div class="panel-body" style="font-size: 0.9em;">
+
+<ul>
+<li><b>Consistent (TSG Loss)</b>: Tumor Suppressor Genes (TSGs) are disrupted or lost. This aligns with biological expectations as catastrophes typically lead to loss of gene function.</li>
+<li><b>Consistent (Oncogene Amp)</b>: Oncogenes are amplified. This indicates that catastrophe events (e.g., Chromoanasynthesis) generated multiple copies, thereby activating the oncogene.</li>
+<li><b>Potential Fusion/Disruption</b>: Potential gene fusion or structural disruption. For oncogenes, this may indicate the creation of a pathogenic fusion gene; for others, it represents a direct structural break.</li>
+<li><b>Inconsistent (TSG Amp)</b>: Inconsistent status. A tumor suppressor gene is amplified, which is rare in tumor evolution and may not be the primary driver of this specific event.</li>
+</ul>
+
+</div>
+</div>
+
+<br>
+
+
+## 2. Predicted Fusion Genes & Disruptions
+Potential oncogenic fusion events or gene disruptions created by structural rearrangements.
+
+```{r fusions}
+if (!is.null(res$fusions) && nrow(res$fusions) > 0) {
+  # Select and rename columns for display
+  cols <- c("fusion_name", "type", "status", "sv_type", "orientation_compatible")
+  if ("sequence_preview" %in% colnames(res$fusions)) {
+      cols <- c(cols, "sequence_preview")
+  }
+  
+  # Robustly select only existing columns
+  cols <- intersect(cols, colnames(res$fusions))
+  
+  df_fus_show <- res$fusions[, cols]
+  
+  datatable(df_fus_show, 
+            escape = FALSE, # CRITICAL: Allows HTML rendering in cells
+            options = list(scrollX = TRUE, pageLength = 10,
+                         columnDefs = list(list(width = '350px', targets = which(colnames(df_fus_show) == "sequence_preview") - 1))),
+            filter = "top",
+            caption = "Predicted Fusion Events with Sequence-level Evidence") %>%
+    formatStyle("orientation_compatible",
+                color = styleEqual(c(TRUE, FALSE), c("green", "red")))
+} else {
+  cat("No inter-genic fusion events detected with the provided gene models.")
+}
+```
+
+<br>
+
+<div class="panel panel-info">
+<div class="panel-heading">
+<h4 class="panel-title">🧬 Glossary: Fusion Status</h4>
+</div>
+<div class="panel-body" style="font-size: 0.9em;">
+
+<ul>
+<li><b>Canonical (Potential 5'->3' fusion)</b>: The SV breakpoints join the 5' part of one gene to the 3' part of another in a way that allows for a continuous, functional fusion transcript. This status indicates high oncogenic potential.</li>
+<li><b>Non-canonical (Orientation mismatch)</b>: Breakpoint orientations are incompatible for a standard 5'->3' fusion (e.g., Head-to-Head or Tail-to-Tail joins). While they unlikely produce a functional fusion protein, they can still lead to gene truncation, loss of function, or enhancer hijacking.</li>
+<li><b>Indeterminate</b>: The fusion potential cannot be accurately determined due to incomplete strand information or complex local rearrangements.</li>
+</ul>
+
+</div>
+</div>
+
+<br>
+
+```{r fusion_architecture_auto, results="asis"}
+# Proactively draw Arriba-style plots for orientation-compatible fusions
+if (!is.null(res$fusions) && !is.null(txdb)) {
+  # Also ensure gene names are not NA. Use which() to avoid NA rows in subsetting.
+  valid_idx <- which(res$fusions$orientation_compatible == TRUE & 
+                    !is.na(res$fusions$gene_5p) & 
+                    !is.na(res$fusions$gene_3p))
+  comp_fusions <- res$fusions[valid_idx, ]
+  
+  if (nrow(comp_fusions) > 0) {
+    cat("<br><h3>Fusion Architecture Details</h3>")
+    cat("Detailed transcript-level diagrams for orientation-compatible fusion events (5'->3' compatible).<br>")
+    
+    # Limit to top 5 to keep report size manageable
+    n_plot <- min(nrow(comp_fusions), 5)
+    
+    for (i in 1:n_plot) {
+      fname <- comp_fusions$fusion_name[i]
+      cat(sprintf("<h4>%s</h4>", fname))
+      
+      # Generate plot in a way that knitr can capture it
+      tryCatch({
+          plot_fusion_arriba(res, fname, txdb)
+      }, error = function(e) {
+          cat(sprintf('<div class="alert alert-warning">Could not generate architecture plot for %s: %s</div>', fname, e$message))
+      })
+      cat("<hr>")
+    }
+  }
+}
+```
+
+## 3. DNA Repair Mechanisms
+Inferred DNA repair pathways (NHEJ, MMEJ, SSA, MMBIR) based on microhomology and insertion signatures at breakpoint junctions.
+
+```{r repair_mechanisms, results="asis"}
+repair <- report_data$repair_mechanisms
+
+if (!is.null(repair)) {
+  cat('<details>')
+  cat('<summary><b>[Click to Expand] View DNA Repair & Microhomology Details</b></summary>')
+  cat('<div style="padding: 15px; border: 1px solid #eee; border-radius: 5px; margin-top: 10px; background-color: #fcfcfc;">')
+  
+  # Layout in columns
+  cat('<div class="row">')
+  
+  # Column 1: Summary Stats
+  cat('<div class="col-md-7">')
+  mech_stats <- repair$summary$repair_mechanisms
+  colnames(mech_stats) <- c("Mechanism", "Count")
+  mech_stats$Proportion <- sprintf("%.1f%%", mech_stats$Count / repair$summary$n_breakpoints * 100)
+  
+  print(
+    kbl(mech_stats, caption = "Distribution of Inferred Repair Mechanisms") %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+      add_header_above(c(" " = 1, "Stats" = 2))
+  )
+  
+  cat(sprintf("<br><b>Dominant Mechanism:</b> %s", repair$summary$dominant_mechanism))
+  cat(sprintf("<br><b>Median Microhomology:</b> %.0f bp", repair$summary$microhomology$median_length))
+  cat('</div>')
+  
+  # Column 2: Histogram of MH lengths
+  cat('<div class="col-md-5">')
+  
+  # Plot 1: SV Type vs Repair (The "Evidence Chain" plot)
+  cat('<h4>Repair by SV Type</h4>')
+  p_sv_repair <- plot_repair_by_svtype(repair, sv)
+  print(p_sv_repair)
+  
+  cat('<hr>')
+  
+  # Plot 2: MH Histogram
+  cat('<h4>Microhomology Distribution</h4>')
+  mh_df <- repair$microhomology
+  mh_data <- mh_df[!is.na(mh_df$microhomology_length) & mh_df$microhomology_length > 0, ]
+  
+  if (nrow(mh_data) > 0) {
+    p_mh <- ggplot(mh_data, aes(x = microhomology_length)) +
+      geom_histogram(binwidth = 1, fill = "#673ab7", color = "white") +
+      theme_minimal() +
+      labs(x = "Length (bp)", y = "Frequency") +
+      scale_x_continuous(breaks = seq(0, max(mh_data$microhomology_length, 5), 2))
+    print(p_mh)
+  } else {
+    cat("<br><div class='alert alert-warning'>No significant microhomology detected at junctions.</div>")
+  }
+  cat('</div>')
+  cat('</div>') # end row
+  
+  # Detailed table of breakpoints
+  cat("<br>")
+  print(datatable(repair$repair_mechanisms[1:min(nrow(repair$repair_mechanisms), 100), ],
+            options = list(pageLength = 5, scrollX = TRUE),
+            caption = "Top 100 Analyzed Breakpoint Junctions"))
+            
+  cat('</div>') # end border div
+  cat('</details>')
+  
+} else {
+  cat("DNA Repair Mechanism analysis was not performed. Ensure the appropriate BSgenome package is installed.")
+}
+```
+
+# Detailed Mechanism Findings
+
+## 1. Chromothripsis
+Characterized by localized shattering and random joining of DNA fragments.
+
+```{r chromothripsis_details}
+if (!is.null(res$chromothripsis) && (res$chromothripsis$n_high_confidence > 0 || res$chromothripsis$n_low_confidence > 0)) {
+  ct_table <- res$chromothripsis$classification
+  
+  # Inject repair signatures if available
+  if (!is.null(repair)) {
+    ct_table$repair_signature <- sapply(1:nrow(ct_table), function(i) {
+      chr <- ct_table$chrom[i]
+      # Extract SV IDs for this chromosome
+      relevant_svs <- sv[which(sv$chrom1 == chr & sv$chrom2 == chr), ]
+      if (nrow(relevant_svs) > 0 && "sv_id" %in% colnames(relevant_svs)) {
+          summarize_repair_per_region(repair, relevant_svs$sv_id)
+      } else {
+          "Unknown"
+      }
+    })
+  } else {
+    ct_table$repair_signature <- "N/A"
+  }
+  
+  cols_to_show <- c("chrom", "start", "end", "classification", "confidence_score", 
+                   "clusterSize", "num_oscillating_CN_segments", "repair_signature")
+  cols_to_show <- intersect(cols_to_show, colnames(ct_table))
+  
+  p_dt <- datatable(ct_table[, cols_to_show],
+            options = list(scrollX = TRUE),
+            caption = "Chromothripsis Events with Molecular Evidence")
+  
+  if ("repair_signature" %in% cols_to_show) {
+    p_dt <- p_dt %>% formatStyle("repair_signature", color = "#1a237e", fontWeight = "bold")
+  }
+  p_dt
+} else {
+  cat("No significant chromothripsis events detected.")
+}
+```
+
+## 2. Chromoplexy
+Characterized by chained translocations across multiple chromosomes.
+
+```{r chromoplexy_details}
+if (!is.null(res$chromoplexy) && res$chromoplexy$total_chains > 0) {
+  cp_sum <- res$chromoplexy$summary
+  
+  # Inject repair signatures if available
+  if (!is.null(repair)) {
+    cp_sum$repair_signature <- sapply(1:nrow(cp_sum), function(i) {
+      # For chromoplexy, we need to extract SVs from the chain
+      # The chains are stored in res$chromoplexy$chain_details
+      chain_id <- cp_sum$chain_id[i]
+      # Find this chain in details
+      detail_idx <- which(sapply(res$chromoplexy$chain_details, function(x) x$summary$chain_id == chain_id))
+      
+      if (length(detail_idx) > 0) {
+          chain_svs <- res$chromoplexy$chain_details[[detail_idx[1]]]$SVs
+          if (!is.null(chain_svs)) {
+              # Multi-step robust matching
+              matched_ids <- sapply(1:nrow(chain_svs), function(j) {
+                  # Try ID match first
+                  if ("sv_id" %in% colnames(chain_svs) && !is.na(chain_svs$sv_id[j])) {
+                      target_id <- as.character(chain_svs$sv_id[j])
+                      if (target_id %in% as.character(sv$sv_id)) return(target_id)
+                  }
+                  # Fallback to coordinate match
+                  match_idx <- which(sv$chrom1 == chain_svs$chrom1[j] & 
+                                   sv$pos1 == chain_svs$pos1[j] &
+                                   sv$chrom2 == chain_svs$chrom2[j] &
+                                   sv$pos2 == chain_svs$pos2[j])
+                  if (length(match_idx) > 0) as.character(sv$sv_id[match_idx[1]]) else NA
+              })
+              summarize_repair_per_region(repair, na.omit(matched_ids))
+          } else {
+              "N/A"
+          }
+      } else {
+          "N/A"
+      }
+    })
+  }
+  
+  if("pvalue" %in% colnames(cp_sum)) cp_sum$pvalue <- format(cp_sum$pvalue, digits=3, scientific=TRUE)
+  if("fdr" %in% colnames(cp_sum)) cp_sum$fdr <- format(cp_sum$fdr, digits=3, scientific=TRUE)
+  if("combined_score" %in% colnames(cp_sum)) cp_sum$combined_score <- round(cp_sum$combined_score, 3)
+  
+  display_cols <- c("chain_id", "n_chromosomes", "n_translocations", "classification", "repair_signature", "combined_score")
+  display_cols <- intersect(display_cols, colnames(cp_sum))
+  
+  datatable(cp_sum[, display_cols], 
+            options = list(scrollX = TRUE),
+            filter = "top",
+            caption = "Chromoplexy Chains") %>%
+    formatStyle("repair_signature", color = "#311b92", fontWeight = "bold")
+} else {
+  cat("No chromoplexy chains detected.")
+}
+```
+
+## 3. Chromoanasynthesis
+Characterized by replication-based mechanisms (FoSTeS) with copy number gradients.
+
+```{r chromoanasynthesis_details}
+if (!is.null(res$chromoanasynthesis) && res$chromoanasynthesis$total_regions > 0) {
+  cs_sum <- res$chromoanasynthesis$summary
+  
+  # Inject repair signatures if available
+  if (!is.null(repair)) {
+    cs_sum$repair_signature <- sapply(1:nrow(cs_sum), function(i) {
+      row <- cs_sum[i, ]
+      # Extract SV IDs in this specific region (check both breakpoints for robustness)
+      relevant_svs <- sv[which((sv$chrom1 == row$chrom & sv$pos1 >= row$start & sv$pos1 <= row$end) |
+                              (sv$chrom2 == row$chrom & sv$pos2 >= row$start & sv$pos2 <= row$end)), ]
+      if (nrow(relevant_svs) > 0 && "sv_id" %in% colnames(relevant_svs)) {
+          summarize_repair_per_region(repair, relevant_svs$sv_id)
+      } else {
+          "Unknown"
+      }
+    })
+  }
+  
+  display_cols <- c("region_id", "chrom", "start", "end", "classification", "max_chain_length", "repair_signature")
+  display_cols <- intersect(display_cols, colnames(cs_sum))
+  
+  datatable(cs_sum[, display_cols],
+            options = list(scrollX = TRUE),
+            caption = "Chromoanasynthesis Regions with Molecular Evidence") %>%
+    formatStyle("repair_signature", color = "#1b5e20", fontWeight = "bold")
+} else {
+  cat("No chromoanasynthesis regions detected.")
+}
+```
+
+# Data Diagnostics
+
+## Data Integrity & Noise Assessment
+The following metrics assess the quality and consistency of the input SV and CNV data.
+
+```{r qc_check, results="asis"}
+if (!is.null(qc)) {
+  qc_summary <- data.frame(
+    Metric = c("Total SVs", "Inter-chromosomal SV Rate", "Total CNV Segments", 
+               "Avg Segment Size (bp)", "Hyper-segmentation Risk (<10kb)", "SV-CNV Overlap Rate"),
+    Value = c(
+      qc$sv_count,
+      sprintf("%.1f%%", qc$interchromosomal_rate * 100),
+      qc$cnv_count,
+      format(round(qc$avg_segment_size), big.mark = ","),
+      sprintf("%.1f%%", qc$hyper_segmentation_risk * 100),
+      sprintf("%.1f%%", qc$sv_cnv_overlap_rate * 100)
+    ),
+    Status = c(
+      ifelse(qc$sv_count > 0, "OK", "Warning"),
+      ifelse(qc$interchromosomal_rate > 0.01, "OK", "Low"),
+      ifelse(qc$cnv_count > 0, "OK", "Warning"),
+      ifelse(qc$avg_segment_size > 5000, "OK", "Warning (Fragmented)"),
+      ifelse(qc$hyper_segmentation_risk < 0.2, "OK", "High Noise"),
+      ifelse(qc$sv_cnv_overlap_rate > 0.9, "OK", "Check Consistency")
+    )
+  )
+  
+  print(
+    kbl(qc_summary, caption = "Data Diagnostics Metrics") %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+      row_spec(which(qc_summary$Status != "OK"), bold = TRUE, color = "white", background = "#FF9800")
+  )
+}
+```
+
+---
+**OncoImplexus** Analysis | Generated on `r Sys.time()`

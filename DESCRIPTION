@@ -1,0 +1,77 @@
+Package: OncoImplexus
+Type: Package
+Title: Integrated Detection of Complex Chromosomal Rearrangements in Cancer
+Version: 1.0.0
+Date: 2025-01-18
+Author: Chia-Chun Chiu, Wei-Sheng Wu, Chien-Feng Li
+Authors@R: c(
+    person("Chia-Chun", "Chiu", role = c("aut", "cre"), email = "n28111021@gs.ncku.edu.tw", comment = "Package maintainer, Chromoplexy/Chromoanasynthesis algorithms"),
+    person("Wei-Sheng", "Wu", role = "aut", comment = "Author"),
+    person("Chien-Feng", "Li", role = "aut", comment = "Author"))
+Maintainer: Chia-Chun Chiu <n28111021@gs.ncku.edu.tw>
+Description: OncoImplexus is a comprehensive framework for detecting and classifying
+    complex chromosomal rearrangements (chromoanagenesis) in cancer genomes.
+    It integrates detection modules for Chromothripsis (adapted from ShatterSeek),
+    Chromoplexy (novel graph-based chaining algorithm), and Chromoanasynthesis
+    (topology-based replication analysis). Features include direct VCF support,
+    advanced visualization (genome dashboards, circos plots), and mechanistic
+    classification of mixed events.
+Depends: R (>= 4.0.0), methods, BiocGenerics, foreach, graph, S4Vectors
+Imports: GenomicRanges, IRanges, MASS, ggplot2, grid, gridExtra,
+    AnnotationDbi, GenomeInfoDb, GenomicFeatures,
+    StructuralVariantAnnotation, patchwork, reshape2, rmarkdown,
+    scales, stats, utils, grDevices, graphics, tidyr, BSgenome, knitr,
+    kableExtra, DT, circlize, VariantAnnotation, data.table
+Suggests: vcfR, BSgenome.Hsapiens.UCSC.hg19,
+    BSgenome.Hsapiens.UCSC.hg38, TxDb.Hsapiens.UCSC.hg19.knownGene,
+    TxDb.Hsapiens.UCSC.hg38.knownGene, org.Hs.eg.db, rtracklayer,
+    BiocIO, Biostrings, XVector
+License: MIT + file LICENSE
+URL: https://github.com/godkin1211/OncoImplexus
+BugReports: https://github.com/godkin1211/OncoImplexus/issues
+Repository: GitHub
+LazyData: no
+Encoding: UTF-8
+RoxygenNote: 7.3.2
+Collate:
+    'ancillary_functions.R'
+    'breakpoint_sequence_analysis.R'
+    'breakpoint_sequence_visualization.R'
+    'chromoanagenesis_integrated.R'
+    'chromoanasynthesis_detection.R'
+    'chromoanasynthesis_topology.R'
+    'chromoanasynthesis_visualization.R'
+    'chromoplexy_chainfinder.R'
+    'chromoplexy_comparison.R'
+    'chromoplexy_detection.R'
+    'chromoplexy_diagnostics.R'
+    'chromoplexy_statistics.R'
+    'chromoplexy_visualization.R'
+    'chromothripsis_detection.R'
+    'chromothripsis_visualization.R'
+    'circos_debug.R'
+    'circos_visualization.R'
+    'cohort_analysis.R'
+    'cohort_reporting.R'
+    'cohort_visualization.R'
+    'debug_classifier.R'
+    'debug_mixed_mechanisms.R'
+    'diagnostic_tools.R'
+    'enrichment_analysis.R'
+    'function_criteria.R'
+    'fusion_gene_prediction.R'
+    'gene_annotation_utils.R'
+    'genome_dashboard_visualization.R'
+    'ggnome_style_visualization.R'
+    'integrated_classifier.R'
+    'integrated_classifier_visualization.R'
+    'quality_control.R'
+    'report_generation.R'
+    'scoring_functions.R'
+    'structural_variant_annotation_support.R'
+    'vcf_parsers.R'
+    'vcf_readers.R'
+    'visualization_cohort.R'
+    'visualization_fusion.R'
+    'visualization_utils.R'
+    'zzz_imports.R'

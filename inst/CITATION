@@ -1,0 +1,27 @@
+citHeader("To cite OncoImplexus in publications, please use:")
+
+bibentry(
+  bibtype  = "Manual",
+  title    = "OncoImplexus: Integrated Detection of Complex Chromosomal Rearrangements in Cancer",
+  author   = c(
+    person("Extended Analysis Contributors"),
+    person("Isidro", "Cortes-Ciriano"),
+    person("Ruibin", "Xi")
+  ),
+  year     = "2025",
+  note     = "R package version 1.0.0",
+  url      = "https://github.com/godkin1211/OncoImplexus"
+)
+
+citFooter(
+  "OncoImplexus includes cancer gene data from OncoKB. If you use this data,",
+  "please also cite:\n\n",
+  "Chakravarty D, Gao J, Phillips SM, et al. OncoKB: A Precision Oncology",
+  "Knowledge Base. JCO Precision Oncology 2017;1:1-16.",
+  "doi:10.1200/PO.17.00011\n\n",
+  "The chromothripsis detection module is adapted from ShatterSeek. If you use",
+  "the chromothripsis detection, please also cite:\n\n",
+  "Cortes-Ciriano I, et al. Comprehensive analysis of chromothripsis in 2,658",
+  "human cancers using whole-genome sequencing. Nature Genetics 2020.",
+  "doi:10.1038/s41588-019-0576-7"
+)

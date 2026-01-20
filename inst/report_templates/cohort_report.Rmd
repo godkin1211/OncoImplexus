@@ -1,0 +1,164 @@
+---
+title: "OncoImplexus Cohort Analysis Report"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: united
+    toc: true
+    toc_float: true
+    code_folding: hide
+params:
+  data_file: "path/to/data.rds"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 12, fig.height = 8)
+library(OncoImplexus)
+library(ggplot2)
+library(DT)
+library(reshape2)
+
+# Load data passed from R function
+data_list <- readRDS(params$data_file)
+cohort <- data_list$cohort
+res_list <- cohort@results
+n_samples <- length(cohort@sample_ids)
+```
+
+# 1. Cohort Overview
+
+This report summarizes chromoanagenesis patterns across a cohort of **`r n_samples`** samples.
+
+```{r agg_stats}
+# Robust aggregation
+agg_list <- list()
+for (sid in names(res_list)) {
+  r <- res_list[[sid]]
+  s <- r$integrated_summary
+  
+  if (is.null(s)) {
+    # Create empty row if missing
+    agg_list[[sid]] <- data.frame(
+      sample_id = sid, CT_high = 0, CT_low = 0, CP_likely = 0, CP_possible = 0,
+      CS_likely = 0, CS_possible = 0, Overall = "Not Analyzed", stringsAsFactors = FALSE
+    )
+  } else {
+    # Use helper to ensure single values
+    get_val <- function(v, default=0) {
+      if (is.null(v) || length(v) == 0 || is.na(v)) return(default)
+      return(v[1])
+    }
+    
+    agg_list[[sid]] <- data.frame(
+      sample_id = sid,
+      CT_high = get_val(s$chromothripsis_high_confidence),
+      CT_low = get_val(s$chromothripsis_low_confidence),
+      CP_likely = get_val(s$chromoplexy_likely),
+      CP_possible = get_val(s$chromoplexy_possible),
+      CS_likely = get_val(s$chromoanasynthesis_likely),
+      CS_possible = get_val(s$chromoanasynthesis_possible),
+      Overall = get_val(s$overall_classification, "No events"),
+      stringsAsFactors = FALSE
+    )
+  }
+}
+agg_df <- do.call(rbind, agg_list)
+
+# Frequency Calculation
+freq_stats <- data.frame(
+  Mechanism = c("Chromothripsis", "Chromoplexy", "Chromoanasynthesis"),
+  Likely_High = c(
+    sum(agg_df$CT_high > 0, na.rm=T),
+    sum(agg_df$CP_likely > 0, na.rm=T),
+    sum(agg_df$CS_likely > 0, na.rm=T)
+  ),
+  Possible_Low = c(
+    sum(agg_df$CT_low > 0, na.rm=T),
+    sum(agg_df$CP_possible > 0, na.rm=T),
+    sum(agg_df$CS_possible > 0, na.rm=T)
+  )
+)
+```
+
+## 1.1 Global Prevalence
+Proportion of samples exhibiting each chromoanagenesis mechanism.
+
+```{r prevalence_plot}
+df_plot <- melt(freq_stats[, 1:3], id.vars = "Mechanism")
+ggplot(df_plot, aes(x = Mechanism, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(y = "Number of Samples", fill = "Confidence", title = "Mechanism Prevalence across Cohort") +
+  scale_fill_manual(values = c("Likely_High" = "#d32f2f", "Possible_Low" = "#ffcdd2"))
+```
+
+# 2. Co-occurrence & Overlap
+
+Analysis of how different mechanisms occur together in the same tumor.
+
+```{r co_occurrence}
+binary_mat <- data.frame(
+  Chromothripsis = ifelse(agg_df$CT_high > 0 | agg_df$CT_low > 0, 1, 0),
+  Chromoplexy = ifelse(agg_df$CP_likely > 0 | agg_df$CP_possible > 0, 1, 0),
+  Chromoanasynthesis = ifelse(agg_df$CS_likely > 0 | agg_df$CS_possible > 0, 1, 0)
+)
+
+if (requireNamespace("UpSetR", quietly = TRUE)) {
+  UpSetR::upset(binary_mat, sets = c("Chromothripsis", "Chromoplexy", "Chromoanasynthesis"), 
+        order.by = "freq", main.bar.color = "#455a64")
+} else {
+  # Simple Heatmap Fallback
+  co_occ <- t(as.matrix(binary_mat)) %*% as.matrix(binary_mat)
+  diag(co_occ) <- colSums(binary_mat)
+  co_df <- melt(co_occ)
+  ggplot(co_df, aes(Var1, Var2, fill = value)) +
+    geom_tile() +
+    geom_text(aes(label = value), color = "white") +
+    scale_fill_gradient(low = "white", high = "#455a64") +
+    theme_minimal() +
+    labs(title = "Mechanism Co-occurrence Matrix", x="", y="", fill="Count")
+}
+```
+
+# 3. Targeted Driver Genes
+
+Most frequently impacted cancer driver genes across the cohort.
+
+```{r gene_hotspots}
+all_driver_hits <- lapply(res_list, function(r) {
+  if(!is.null(r$gene_annotations)) return(r$gene_annotations$driver_hits)
+  if(!is.null(r$annotation)) return(r$annotation$driver_hits)
+  return(NULL)
+})
+gene_df <- do.call(rbind, Filter(Negate(is.null), all_driver_hits))
+
+if (!is.null(gene_df) && nrow(gene_df) > 0) {
+  gene_counts <- as.data.frame(table(gene_df$Gene, gene_df$Mechanism))
+  colnames(gene_counts) <- c("Gene", "Mechanism", "Frequency")
+  
+  top_genes <- aggregate(Frequency ~ Gene, data = gene_counts, sum)
+  top_genes <- top_genes$Gene[order(top_genes$Frequency, decreasing = TRUE)][1:min(20, nrow(top_genes))]
+  
+  ggplot(gene_counts[gene_counts$Gene %in% top_genes, ], aes(x = reorder(Gene, Frequency), y = Frequency, fill = Mechanism)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    theme_minimal() +
+    labs(x = "Gene Symbol", title = "Top Impacted Driver Genes")
+} else {
+  cat("No high-confidence driver gene hits found in this cohort.")
+}
+```
+
+# 4. Sample Detail Catalog
+
+Detailed classification for every sample in the cohort.
+
+```{r detail_table}
+datatable(agg_df, 
+          filter = "top", 
+          options = list(pageLength = 15, scrollX = TRUE),
+          caption = "Cohort Sample Summary")
+```
+
+---
+Generated by **OncoImplexus** | `r Sys.time()`

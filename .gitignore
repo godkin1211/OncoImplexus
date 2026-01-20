@@ -1,0 +1,46 @@
+# R package build artifacts
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.Rcheck/
+*.Rcheck/
+src/*.o
+src/*.so
+*.tar.gz
+
+# Local data and large files
+*.vcf
+*.vcf.gz
+*.tbi
+*.bam
+*.bai
+*.bigWig
+*.bw
+
+# Test outputs
+test_results.rds
+phase1_validation_results.rds
+tests/validation/*.rds
+tests/validation/*.html
+tests/validation/validation_summary.txt
+
+# Temp directories
+WGS_results/
+tmp/
+temp/
+tests/
+# Editor/System files
+.DS_Store
+.vscode/
+.idea/
+.claude/
+.gitignore
+*.swp
+*~
+
+# Documentation PDFs (usually build artifacts, but if they are source, keep them)
+# tutorial.pdf seems to be source or generated documentation. I'll keep it for now.
+
+# Old/Backup files
+README_OLD.md

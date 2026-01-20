@@ -1,0 +1,490 @@
+---
+title: "OncoImplexus Algorithm Details"
+author: "OncoImplexus Team"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    latex_engine: pdflatex
+---
+
+# OncoImplexus Algorithm Details
+
+**OncoImplexus** is an integrated framework for the detection and classification of complex chromosomal rearrangements (chromoanagenesis) in cancer genomes. This document details the mathematical models and algorithmic logic for its three primary modules: **Chromothripsis**, **Chromoplexy**, and **Chromoanasynthesis**.
+
+## 1. Chromothripsis Detection
+
+The chromothripsis detection module is adapted from the statistical framework established by Cortes-Ciriano et al. (Nature Genetics, 2020) in the *ShatterSeek* algorithm. It identifies clusters of interleaved structural variants (SVs) and evaluates them against statistical criteria defining random shattering and reassembly.
+
+### 1.1 SV Clustering
+SVs are first clustered based on genomic proximity. Let $SV_i$ and $SV_j$ be two intrachromosomal SVs with breakpoints $B_i = \{b_{i1}, b_{i2}\}$ and $B_j = \{b_{j1}, b_{j2}\}$.
+A cluster $C$ is defined as a connected component in a graph where nodes are SVs and an edge exists between $SV_i$ and $SV_j$ if their spanned intervals overlap or are contained within one another.
+
+### 1.2 Statistical Criteria
+
+For each identified cluster, the following statistical tests are performed:
+
+#### A. Clustering of Breakpoints (Exponential Distribution Test)
+
+To test if breakpoints are randomly distributed (Poisson process) versus clustered, we analyze the inter-breakpoint distances.
+Let $X = \{x_1, x_2, ..., x_n\}$ be the sorted genomic positions of all breakpoints in a cluster. The inter-breakpoint distances are $d_i = x_{i+1} - x_i$.
+Under the null hypothesis of random breakage, the distances $d_i$ should follow an Exponential distribution:
+$$ f(x; \lambda) = \lambda e^{-\lambda x} $$ 
+where $\lambda$ is the rate parameter.
+
+##### Standard KS Test (Legacy)
+
+In the traditional approach, $\lambda$ is estimated as $\hat{\lambda} = 1/\bar{d}$, and a **Kolmogorov-Smirnov (KS) test** compares the empirical distribution against the theoretical exponential. However, this approach has a known statistical issue: when testing a composite hypothesis with estimated parameters, the standard KS test produces **conservative p-values** (systematically inflated).
+
+##### Monte Carlo KS Test (Recommended, v1.1+)
+
+To address the composite null hypothesis problem, OncoImplexus implements a **Parametric Bootstrap** approach, which is the gold standard for this class of problems:
+
+**Algorithm:**
+
+1. **Compute observed statistic**: Given observed distances $\{d_1, ..., d_n\}$, estimate $\hat{\lambda}_{obs} = 1/\bar{d}$ and compute the KS statistic:
+   $$ D_{obs} = \sup_x |F_n(x) - F_{\hat{\lambda}_{obs}}(x)| $$
+
+2. **Simulate null distribution**: For $b = 1, ..., B$ (typically $B = 1000$):
+   - Generate $n$ samples from $\text{Exp}(\lambda = 1)$ (scale-invariant due to KS property)
+   - Estimate $\hat{\lambda}^{(b)} = 1/\bar{d}^{(b)}$ from simulated data
+   - Compute $D^{(b)} = \sup_x |F_n^{(b)}(x) - F_{\hat{\lambda}^{(b)}}(x)|$
+
+3. **Compute empirical p-value**:
+   $$ p = \frac{\#\{D^{(b)} \geq D_{obs}\} + 1}{B + 1} $$
+
+   The "+1" correction ensures $p > 0$ and provides a conservative estimate.
+
+**Mathematical Justification:**
+
+The KS statistic for exponential distributions is scale-invariant:
+$$ D(\{d_i\}, \lambda) = D(\{d_i/c\}, c\lambda) $$
+
+This allows simulation with $\lambda = 1$ regardless of the true rate, making the bootstrap computationally efficient.
+
+**Computational Complexity:**
+
+| Breakpoints ($n$) | Simulations ($B$) | Typical Runtime |
+|-------------------|-------------------|-----------------|
+| 10 | 1000 | < 0.1 sec |
+| 100 | 1000 | < 0.5 sec |
+| 500 | 1000 | ~ 1-2 sec |
+
+*Note: OncoImplexus (v1.0.0+) implements a critical fix in this test by correctly extracting and ordering breakpoint coordinates, resolving a coordinate-swap bug found in earlier frameworks that led to significant false-negative rates in complex cancer genomes.*
+
+
+#### B. Randomness of Fragment Joins (Bernoulli/Multinomial Test)
+Chromothripsis involves the random rejoining of DNA fragments. This implies that the four types of fragment joins (resulting in different SV types) should occur with equal probability.
+The four join types (SV types) are:
+1.  **Deletion-like (DEL):** (+, -) orientation
+2.  **Duplication-like (DUP):** (-, +) orientation
+3.  **Head-to-Head Inversion (h2hINV):** (+, +) orientation
+4.  **Tail-to-Tail Inversion (t2tINV):** (-, -) orientation
+
+We use a **Chi-squared Goodness-of-Fit test** (or exact Multinomial test) to test the null hypothesis:
+$$ P(\text{DEL}) = P(\text{DUP}) = P(\text{h2hINV}) = P(\text{t2tINV}) = 0.25 $$ 
+Significant deviation (low p-value) suggests non-random mechanisms (e.g., selection pressure), though "High Confidence" chromothripsis typically requires adhering to this random profile.
+
+#### C. Chromosomal Enrichment
+We test if the chromosome containing the cluster has significantly more SVs than expected by chance, given its length relative to the genome.
+Let $N_{chr}$ be the number of SVs on the candidate chromosome, and $N_{total}$ be the total SVs in the sample. Let $L_{chr}$ and $L_{genome}$ be the effective lengths.
+The expected probability is $p = L_{chr} / L_{genome}$.
+A **Binomial Test** calculates the probability of observing $\ge N_{chr}$ events:
+$$ P(X \ge N_{chr}) = \sum_{k=N_{chr}}^{N_{total}} \binom{N_{total}}{k} p^k (1-p)^{N_{total}-k} $$ 
+
+#### D. Copy Number Oscillations
+Chromothripsis typically produces oscillating copy number (CN) states (e.g., between 1 and 2 copies).
+We calculate the maximum number of consecutive oscillating CN segments. Let $C = (c_1, c_2, ..., c_m)$ be the sequence of total copy numbers for adjacent segments in the region.
+An oscillation is defined as a transition $c_i \to c_{i+1}$ where $|c_i - c_{i+1}| \le 1$.
+The metric $M_{osc}$ counts the length of the longest sub-sequence satisfying oscillating conditions (2-state or 3-state).
+
+---
+
+## 2. Chromoplexy Detection (v3.0)
+
+OncoImplexus introduces a novel **Graph-Based Chaining Algorithm** (v3.0) to detect chromoplexy, overcoming limitations in previous methods that failed to connect chains when local rearrangements or deletions occurred at breakpoints.
+
+### 2.1 Graph Construction
+We construct a graph $G = (V, E)$ where nodes $V$ represent genomic breakpoints.
+The edge set $E$ is the union of three distinct edge types: $E = E_{tra} \cup E_{adj} \cup E_{del}$.
+
+#### A. Translocation Edges ($E_{tra}$)
+Represent observed inter-chromosomal structural variants.
+For a translocation between $chrA:pos1$ and $chrB:pos2$:
+$$ (v_{A,1}, v_{B,2}) \in E_{tra} $$ 
+Weight: $w_{tra} = 1.0$
+
+#### B. Genomic Adjacency Edges ($E_{adj}$)
+Represent the physical proximity of breakpoints on the *same* chromosome, allowing the algorithm to "walk" along the chromosome to find the next translocation.
+For two breakpoints $v_i, v_j$ on the same chromosome with distance $d_{ij} = |pos_i - pos_j|$:
+$$ (v_i, v_j) \in E_{adj} \iff d_{ij} < D_{max\_adj} $$ 
+where $D_{max\_adj}$ is the adjacency threshold (default 10Mb).
+The edge weight decays exponentially with distance:
+$$ w_{adj}(d_{ij}) = e^{-d_{ij} / \sigma} $$ 
+where $\sigma$ is a decay scale (default 5Mb).
+
+#### C. Deletion Bridges ($E_{del}$)
+Represent inferred deletions that connect two breakpoints (e.g., a "bridge" formed by the loss of the segment between them).
+A deletion bridge is identified if a CNV deletion segment $S_{del}$ spans or is adjacent to breakpoints $v_i, v_j$.
+$$ (v_i, v_j) \in E_{del} $$ 
+Confidence score $C_{bridge}$ is calculated based on distance, deletion size, and copy number:
+$$ C_{bridge} = 0.5 \cdot e^{-d/200kb} + 0.3 \cdot S_{size} + 0.2 \cdot e^{-(CN)/1} $$ 
+
+### 2.2 Chain Discovery (Backtracking)
+We search for chains (paths) in $G$ that satisfy chromoplexy criteria using a backtracking algorithm (Depth-First Search with constraints).
+A path $P = (v_1, v_2, ..., v_k)$ is a valid chromoplexy chain candidate if:
+1.  **Length:** $N_{tra}(P) \ge N_{min\_tra}$ (Minimum translocations, default 3).
+2.  **Complexity:** $N_{chr}(P) \ge N_{min\_chr}$ (Minimum chromosomes involved, default 3).
+3.  **Graph Structure:** The path traverses a sequence of translocation edges interleaved with adjacency/deletion edges.
+
+The search space is pruned using:
+*   `max_depth`: Maximum chain length.
+*   `max_neighbors`: Limit on adjacency edges per node (optimization for complex graphs).
+
+### 2.3 Evaluation and Scoring
+Each candidate chain is scored:
+$$ Score_{combined} = 0.3 \cdot S_{CN} + 0.3 \cdot S_{complexity} + 0.2 \cdot F_{del} + 0.2 \cdot S_{stat} $$ 
+Where:
+*   $S_{CN} = e^{-\text{mean}(|CN - 2|)/2}$: Copy number stability score.
+*   $S_{complexity}$: Normalized score based on number of chromosomes and translocations.
+*   $F_{del}$: Fraction of edges that are deletion bridges.
+
+---
+
+## 3. Chromoanasynthesis Detection
+
+This module detects replication-based mechanisms (Fork Stalling and Template Switching - FoSTeS / MMBIR), characterized by local clustering of SVs, copy number gradients, and linked breakpoint chains.
+
+### 3.1 Copy Number Gradient Detection
+Chromoanasynthesis often produces a stepwise increase in copy number. We detect this using a sliding window approach.
+For a window of CN segments $W$, we calculate:
+1.  **Spearman Correlation ($\rho$):** Correlation between segment index and Total CN.
+    $$ \rho = \text{cor}(\text{rank}(index), \text{rank}(CN)) $$ 
+2.  **Total Variation ($V$):** Measures local instability ("jumpiness").
+    $$ V = \frac{\sum |CN_{i+1} - CN_i|}{\text{mean}(CN)} $$ 
+
+A region is flagged if $\rho > \rho_{thresh}$ (default 0.4) or if $V$ is sufficiently high with a positive trend.
+
+### 3.2 SV Topology Analysis
+We analyze the topology of SVs within the flagged regions to distinguish FoSTeS from Breakage-Fusion-Bridge (BFB) cycles.
+
+#### A. Linked SV Chains (FoSTeS Signature)
+FoSTeS involves serial template switching. We detect this by finding chains of "linked" SVs.
+Two SVs, $SV_i$ and $SV_j$, are **linked** if any of their breakpoints are within a small distance $\delta$ (default 2kb, representing the replication fork jumping distance).
+$$ Linked(SV_i, SV_j) \iff \min_{b \in B_i, b' \in B_j} |b - b'| < \delta $$ 
+We construct an adjacency graph of SVs and find connected components (chains).
+$$ L_{chain} = \text{max}(\text{size}(\text{ConnectedComponents})) $$ 
+High $L_{chain}$ ($\ge 3$ or $4$) is a strong indicator of chromoanasynthesis.
+
+#### B. Fold-back Inversions (BFB Signature)
+BFB cycles are characterized by "fold-back" inversions (very short span inversions).
+$$ SV \in \text{FoldBack} \iff SV_{type} \in \{h2hINV, t2tINV\} \land |pos2 - pos1| < 20kb $$ 
+High density of fold-backs penalizes the chromoanasynthesis score (suggesting BFB instead).
+
+### 3.3 Classification
+Final classification relies on a weighted complexity score:
+$$ Score = 0.2 \cdot S_{grad} + 0.2 \cdot S_{var} + 0.2 \cdot S_{dup} + 0.4 \cdot S_{chain} $$ 
+Events are classified as "Likely" or "Possible" based on this score and the absence of BFB features.
+
+---
+
+## 4. DNA Repair Mechanism Inference
+
+OncoImplexus analyzes the base-level sequence features at structural variant junctions to infer the operative DNA double-strand break (DSB) repair pathways.
+
+### 4.1 Sequence Extraction and Orientation
+To detect microhomology accurately, reference sequences flanking each breakpoint are extracted and re-oriented based on the SV strand. 
+
+Let $S_1$ and $S_2$ be the reference sequences at the two breakpoints. They are transformed into:
+*   **Kept Sequence ($s_{kept}$):** The sequence retained in the rearranged genome, oriented facing the junction.
+*   **Discarded Sequence ($s_{disc}$):** The sequence "lost" or "overlapped" during the rearrangement, starting exactly from the breakpoint position.
+
+This normalization ensures that regardless of the original SV type (DEL, DUP, INV), the junction interface always follows a unified coordinate system where the junction-adjacent base of Side 1 is at the start of its discarded fragment, and Side 2 is at the end.
+
+### 4.2 Microhomology Detection (Unified Suffix-Prefix Algorithm)
+Microhomology is defined as an identical sequence present at both breakpoint interfaces that is represented only once in the resulting junction.
+
+We identify the maximum length $k$ such that:
+$$ \text{prefix}(s_{1,disc}, k) == \text{suffix}(s_{2,disc}, k) $$ 
+where $k \le \text{max\_microhomology}$ (default 25 bp). 
+
+The match must be **continuous** starting from the junction. Any mismatch terminates the search, ensuring that only biologically relevant microhomology is reported.
+
+> **Methodological Note: Continuous Microhomology Assumption**
+>
+> OncoImplexus implements a **strict continuous match** requirement: microhomology must extend without gaps from the exact junction breakpoint. This design choice is based on:
+>
+> 1. **Biological relevance**: True MMEJ-mediated repair utilizes contiguous homology for annealing
+> 2. **Reduced false positives**: Allowing gaps would detect spurious matches in repetitive sequences
+> 3. **Consistency with major tools**: This approach aligns with BreakDancer, GRIDSS, and other established SV callers
+>
+> **Alternative definitions in literature**:
+> - Some studies report "gapped microhomology" allowing 1-2 bp mismatches
+> - Extended microhomology with internal insertions (templated insertions)
+>
+> Users requiring alternative definitions should post-process the extracted sequences (`$sequences` output) with custom matching algorithms.
+
+### 4.3 Classification Criteria
+The inferred repair mechanism is determined by the length of microhomology ($L_{MH}$) and the type of SV:
+
+| Mechanism | Criteria | Biological Significance |
+|:---|:---|:---|
+| **NHEJ** | $L_{MH} \in \{0, 1\}$ bp | Classic Non-Homologous End Joining; often associated with Chromothripsis. |
+| **MMEJ** | $2 \le L_{MH} \le 20$ bp | Microhomology-Mediated End Joining (or Alt-EJ); suggests error-prone repair. |
+| **SSA** | $L_{MH} > 20$ bp | Single-Strand Annealing; involves long homologous repeats. |
+| **MMBIR** | $2 \le L_{MH} \le 5$ bp AND SV = DUP | Microhomology-Mediated Break-Induced Replication; a hallmark of Chromoanasynthesis. |
+
+### 4.4 Insertion Detection
+If no microhomology is found, the algorithm checks for non-templated insertions ($L_{ins}$) using the VCF `INSSEQ` or `ALT` fields. The presence of small insertions (typically <10 bp) further supports an NHEJ repair origin.
+
+---
+
+## 5. Fusion Gene Prediction
+
+This module identifies potential oncogenic fusion genes and disruptions created by complex chromosomal rearrangements.
+
+### 5.1 Inter-genic Structural Variant Scanning
+Let $G = \{g_1, g_2, ..., g_m\}$ be a set of gene models with genomic intervals $I_{g} = [start_g, end_g]$ and strands $S_g \in \{+, -\}$. 
+An SV with breakpoints $\{b_1, b_2\}$ is identified as a potential fusion source if:
+$$ \exists g_i, g_j \in G : b_1 \in I_{g_i} \land b_2 \in I_{g_j} \land g_i \neq g_j $$
+
+### 5.2 Orientation Compatibility Algorithm
+To support a functional 5' to 3' chimeric transcript, the genomic join must preserve the transcription polarity. Let $s_1, s_2 \in \{+, -\}$ be the strands of the SV breakpoints (representing the side retained).
+
+A gene $g$ acts as a valid **5' Partner (Head)** if:
+*   $S_g = +$ and $s = +$ (Junction is to the right of the breakpoint)
+*   $S_g = -$ and $s = -$ (Junction is to the left of the breakpoint)
+
+A gene $g$ acts as a valid **3' Partner (Tail)** if:
+*   $S_g = +$ and $s = -$ (Junction is to the left of the breakpoint)
+*   $S_g = -$ and $s = +$ (Junction is to the right of the breakpoint)
+
+### 5.3 Classification
+*   **Canonical Fusion**: Both 5' and 3' partner conditions are met by the two involved genes. This orientation allows the mRNA polymerase to read across the junction into the 3' partner.
+*   **Non-canonical / Disruption**: The orientation is incompatible with a functional 5'->3' transcript (e.g., Head-to-Head join). Such events are flagged as gene disruptions rather than productive fusions.
+
+---
+
+## 6. Statistical Considerations and Limitations
+
+This section provides critical information about the statistical assumptions underlying OncoImplexus and their practical implications.
+
+### 6.1 Exponential Distribution Test Caveats
+
+#### Composite Null Hypothesis Problem
+
+The Kolmogorov-Smirnov (KS) test used in chromothripsis detection tests the null hypothesis that inter-breakpoint distances follow an exponential distribution. However, the rate parameter $\lambda$ is **estimated from the sample** rather than specified a priori.
+
+When testing a composite hypothesis (distribution family with unknown parameters), the standard KS test is **conservative**, meaning:
+- The actual Type I error rate is lower than the nominal $\alpha$
+- The test has reduced power to reject false null hypotheses
+- P-values are systematically inflated
+
+**Mathematical Basis:**  
+Let $F_n(x)$ be the empirical CDF and $F_{\hat{\lambda}}(x)$ be the exponential CDF with estimated rate. The KS statistic:
+$$ D_n = \sup_x |F_n(x) - F_{\hat{\lambda}}(x)| $$
+
+Under the composite null, $D_n$ follows a modified distribution (Lilliefors distribution), not the standard Kolmogorov distribution. Critical values from standard tables are **too large**.
+
+**Practical Implication:**  
+A "non-significant" p-value (e.g., $p > 0.05$) does not necessarily mean distances are exponentially distributed. Consider this as supportive rather than definitive evidence.
+
+**OncoImplexus Solution (v1.1+):**
+
+OncoImplexus addresses this problem using **Parametric Bootstrap** (Monte Carlo simulation), which is the gold standard for goodness-of-fit testing with estimated parameters. See Section 1.2A for the detailed algorithm.
+
+This approach:
+- Produces correctly calibrated p-values
+- Requires no external dependencies
+- Is computationally efficient for typical breakpoint counts
+
+**Legacy Alternatives (for reference):**
+1. **Anderson-Darling test** - more sensitive to tail deviations (requires `goftest` package)
+2. **Lilliefors test** - corrected critical values (limited availability for exponential)
+
+### 6.2 Chi-Squared Test Assumptions
+
+The fragment joins randomness test assumes:
+1. **Independence**: Each SV join is independent
+2. **Expected frequency $\geq 5$**: All four categories (DEL, DUP, h2hINV, t2tINV) should have expected count $\geq 5$
+
+When expected frequencies are small:
+$$ n \cdot p_i = n/4 < 5 \implies n < 20 $$
+
+For clusters with fewer than 20 SVs, the chi-squared approximation may be unreliable.
+
+**Recommendation:**  
+For small clusters ($n < 20$), interpret fragment joins p-values with caution or use Fisher's exact test.
+
+### 6.3 Copy Number Oscillation Definition
+
+The oscillation metric uses a strict definition:
+$$ |c_i - c_{i+1}| \leq 1 $$
+
+This assumes **integer copy number values**. In practice, CNV callers output continuous estimates with measurement noise. The implementation rounds or truncates values, which may affect results.
+
+**Considerations:**
+- Floating-point CN values (e.g., 1.8, 2.1) are treated as distinct from 2.0
+- Minor noise can artificially break oscillation chains
+- Consider pre-rounding CN values if this is a concern
+
+### 6.4 Correlation Threshold for Chromoanasynthesis
+
+The gradient detection uses Spearman rank correlation with a fixed threshold ($\rho_{thresh} = 0.4$). This threshold was chosen based on empirical observations but:
+- Not validated across all cancer types
+- Does not account for the number of segments (correlation significance depends on sample size)
+- May require adjustment for different CNV callers
+
+**Segment Count Effect on Correlation Significance:**
+
+| Segments (n) | Critical $\rho$ ($\alpha$=0.05) | Critical $\rho$ ($\alpha$=0.01) |
+|--------------|---------------------------|---------------------------|
+| 5 | 0.90 | 1.00 |
+| 10 | 0.65 | 0.79 |
+| 20 | 0.45 | 0.57 |
+| 50 | 0.28 | 0.36 |
+
+For small segment counts, even high correlations may not be statistically significant.
+
+---
+
+## 7. Integrated Detection Workflow
+
+OncoImplexus provides an integrated `detect_chromoanagenesis()` function that orchestrates all three detection modules and resolves overlapping events.
+
+### 7.1 Execution Pipeline
+
+```
+Input: SV.sample, CNV.sample, genome
+    |
+    |-> [1] Chromothripsis Detection
+    |       |-> Intra-chromosomal SV clustering
+    |       |-> Statistical criteria evaluation
+    |       |-> Classification (High/Low Confidence)
+    |
+    |-> [2] Chromoplexy Detection
+    |       |-> Inter-chromosomal SV extraction
+    |       |-> Graph construction (TRA + ADJ + DEL edges)
+    |       |-> Chain discovery (backtracking)
+    |       |-> Chain evaluation and scoring
+    |
+    |-> [3] Chromoanasynthesis Detection
+            |-> CN gradient analysis
+            |-> SV topology analysis (chains, fold-backs)
+            |-> BFB vs FoSTeS discrimination
+    
+    v
+[4] Mixed Mechanism Classification
+    |-> Spatial overlap detection
+    |-> Chromosome-level assignment
+    |-> Sample-level integration
+    |-> Global FDR correction across mechanisms
+```
+
+### 7.2 Multiple Testing Correction
+
+OncoImplexus performs multiple statistical tests across chromosomes and mechanisms. To control the false discovery rate (FDR), we apply the Benjamini-Hochberg procedure:
+
+Let $p_1, p_2, ..., p_m$ be the sorted p-values from all tests. The adjusted p-value (q-value) is:
+$$ q_i = \min \left( p_i \cdot \frac{m}{i}, q_{i+1} \right) $$
+
+**Scope of FDR Correction:**
+- Chromothripsis: Per-chromosome tests (fragment joins, exponential, enrichment)
+- Chromoplexy: Per-chain significance tests
+- Cross-mechanism: Global FDR combining chromothripsis and chromoplexy p-values
+
+### 7.3 Conflict Resolution
+
+When multiple mechanisms are detected on the same chromosome or region:
+
+1. **Non-overlapping events**: Both mechanisms are reported
+2. **Overlapping events**: Classified as "Mixed" with dominant mechanism annotation
+3. **Dominance determination**: Based on:
+   - Confidence scores
+   - Number of supporting SVs
+   - Statistical significance
+
+---
+
+## 8. Algorithm Limitations
+
+### 8.1 Input Data Requirements
+
+| Requirement | Chromothripsis | Chromoplexy | Chromoanasynthesis |
+|-------------|----------------|-------------|---------------------|
+| Intra-chr SVs | Required | Not used | Required |
+| Inter-chr SVs | Optional | Required | Optional |
+| CNV segments | Required | Recommended | Required |
+| Breakpoint strands | Required | Required | Required |
+| BSgenome (repair) | Optional | Optional | Optional |
+
+### 8.2 Known Limitations
+
+1. **SV Caller Dependency**: Results sensitive to SV calling accuracy
+   - Missing calls -> false negatives
+   - False calls -> potential false positives
+   - Imprecise breakpoints -> reduced repair mechanism accuracy
+
+2. **CNV Segmentation Effects**:
+   - Over-segmentation -> inflated oscillation counts
+   - Under-segmentation -> missed events
+   - Resolution affects gradient detection
+
+3. **Computational Complexity**:
+   - Chromoplexy chain search is $O(b \cdot d^n)$ where $b$ = branches, $d$ = depth, $n$ = nodes
+   - Highly connected graphs (>500 inter-chr SVs) may require parameter tuning
+
+4. **Reference Genome Requirement**:
+   - Repair mechanism inference requires BSgenome object
+   - Chromosome naming must match (chr1 vs 1)
+
+### 8.3 Edge Cases
+
+| Scenario | Behavior | Recommendation |
+|----------|----------|----------------|
+| No SVs detected | Returns empty results | Check SV caller output |
+| Only inter-chr SVs | Chromothripsis/CS skipped | Expected behavior |
+| Very large SV counts (>1000) | Potential timeout | Reduce `max_path_search` |
+| Mismatched chr names | Analysis fails | Standardize naming |
+| Empty CNV data | Partial analysis only | Provide CNV data for complete analysis |
+
+---
+
+## 9. Performance Characteristics
+
+### 9.1 Time Complexity
+
+| Module | Complexity | Typical Runtime (100 SVs) |
+|--------|-----------|---------------------------|
+| Chromothripsis | $O(n^2)$ for clustering | < 5 seconds |
+| Chromoplexy | $O(k \cdot d^m)$ for chain search | 5-30 seconds |
+| Chromoanasynthesis | $O(s \cdot w)$ for sliding window | < 5 seconds |
+
+Where: $n$ = SVs, $k$ = start nodes, $d$ = branching factor, $m$ = max depth, $s$ = segments, $w$ = window sizes.
+
+### 9.2 Memory Usage
+
+Primary memory consumers:
+- Adjacency matrix for SV clustering: $O(n^2)$
+- Chromoplexy graph edges: $O(n \cdot k)$ where $k$ = max neighbors
+- Path storage during backtracking: $O(depth \cdot paths)$
+
+**Recommendation**: For samples with >500 SVs, consider:
+- Reducing `max_path_search`
+- Limiting `adjacency_distance`
+- Using `max_neighbors` parameter
+
+---
+
+## References
+
+1. Stephens, P. J. et al. Massive genomic rearrangement acquired in a single catastrophic event during cancer development. *Cell* 144, 27-40 (2011).
+
+2. Baca, S. C. et al. Punctuated evolution of prostate cancer genomes. *Cell* 153, 666-677 (2013).
+
+3. Liu, P. et al. Chromosome catastrophes involve replication mechanisms generating complex genomic rearrangements. *Cell* 146, 889-903 (2011).
+
+4. Cortés-Ciriano, I. et al. Comprehensive analysis of chromothripsis in 2,658 human cancers using whole-genome sequencing. *Nat. Genet.* 52, 331-341 (2020).
+
+5. Hastings, P. J. et al. A microhomology-mediated break-induced replication model for the origin of human copy number variation. *PLoS Genet.* 5, e1000327 (2009).
+
+6. McVey, M. & Lee, S. E. MMEJ repair of double-strand breaks (director's cut): deleted sequences and alternative endings. *Trends Genet.* 24, 529-538 (2008).
