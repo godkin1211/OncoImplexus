@@ -1,7 +1,7 @@
 Package: OncoImplexus
 Type: Package
 Title: Integrated Detection of Complex Chromosomal Rearrangements in Cancer
-Version: 1.2.0
+Version: 1.3.0
 Date: 2025-01-18
 Author: Chia-Chun Chiu, Wei-Sheng Wu, Chien-Feng Li
 Authors@R: c(
@@ -24,8 +24,8 @@ Imports: GenomicRanges, IRanges, MASS, ggplot2, grid, gridExtra,
     kableExtra, DT, circlize, VariantAnnotation, data.table
 Suggests: vcfR, BSgenome.Hsapiens.UCSC.hg19,
     BSgenome.Hsapiens.UCSC.hg38, TxDb.Hsapiens.UCSC.hg19.knownGene,
-    TxDb.Hsapiens.UCSC.hg38.knownGene, org.Hs.eg.db, rtracklayer,
-    BiocIO, Biostrings, XVector
+    TxDb.Hsapiens.UCSC.hg38.knownGene, org.Hs.eg.db, clusterProfiler,
+    rtracklayer, BiocIO, Biostrings, XVector
 License: MIT + file LICENSE
 URL: https://github.com/godkin1211/OncoImplexus
 BugReports: https://github.com/godkin1211/OncoImplexus/issues

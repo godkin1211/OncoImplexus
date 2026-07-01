@@ -128,6 +128,12 @@ collapse_chromoplexy_chains <- function(chromoplexy_result,
             evidence_mode = paste(sort(unique(s$evidence_mode)), collapse = ","),
             event_qc_score = score$event_qc_score,
             event_confidence = score$event_confidence,
+            event_evidence_score = score$event_evidence_score,
+            sv_support_score = score$sv_support_score,
+            graph_complexity_score = score$graph_complexity_score,
+            chromosome_diversity_score = score$chromosome_diversity_score,
+            chain_support_score = score$chain_support_score,
+            cycle_support_score = score$cycle_support_score,
             chain_ids = paste(sort(cids), collapse = ","),
             sv_ids = paste(sv_ids, collapse = ","),
             stringsAsFactors = FALSE
@@ -192,6 +198,11 @@ collapse_chromoplexy_chains <- function(chromoplexy_result,
     event_summary$genes[is.na(event_summary$genes)] <- ""
     event_summary$n_driver_genes[is.na(event_summary$n_driver_genes)] <- 0L
     event_summary$driver_genes[is.na(event_summary$driver_genes)] <- ""
+    event_summary$driver_impact_score <- pmin(event_summary$n_driver_genes / 3, 1)
+    event_summary$event_priority_score <- (
+        event_summary$event_qc_score * 0.80 +
+        event_summary$driver_impact_score * 0.20
+    )
 
     list(
         event_summary = event_summary,
@@ -247,19 +258,26 @@ empty_collapsed_chromoplexy_events <- function() {
 score_collapsed_chromoplexy_event <- function(chain_summary, event_nodes, sv_indices) {
     combined <- chain_summary$combined_score
     combined <- combined[!is.na(combined)]
-    evidence_score <- if (length(combined) > 0) max(combined) else 0
+    event_evidence_score <- if (length(combined) > 0) max(combined) else 0
     chain_support_score <- min(nrow(chain_summary) / 3, 1)
     sv_support_score <- min(length(unique(sv_indices)) / 6, 1)
-    chrom_support_score <- min(length(unique(vapply(strsplit(event_nodes, ":", fixed = TRUE),
-                                                   `[`, character(1), 1))) / 5, 1)
-    cycle_score <- if (any(chain_summary$is_cycle, na.rm = TRUE)) 1 else 0
+    chromosome_diversity_score <- min(length(unique(vapply(strsplit(event_nodes, ":", fixed = TRUE),
+                                                          `[`, character(1), 1))) / 5, 1)
+    cycle_support_score <- if (any(chain_summary$is_cycle, na.rm = TRUE)) 1 else 0
+    graph_complexity_score <- mean(c(
+        sv_support_score,
+        chromosome_diversity_score,
+        chain_support_score,
+        cycle_support_score
+    ))
 
     event_qc_score <- (
-        evidence_score * 0.45 +
+        event_evidence_score * 0.40 +
         sv_support_score * 0.20 +
-        chrom_support_score * 0.20 +
+        graph_complexity_score * 0.15 +
+        chromosome_diversity_score * 0.15 +
         chain_support_score * 0.10 +
-        cycle_score * 0.05
+        cycle_support_score * 0.00
     )
     event_qc_score <- max(0, min(1, event_qc_score))
 
@@ -271,7 +289,16 @@ score_collapsed_chromoplexy_event <- function(chain_summary, event_nodes, sv_ind
         "Low"
     }
 
-    list(event_qc_score = event_qc_score, event_confidence = event_confidence)
+    list(
+        event_qc_score = event_qc_score,
+        event_confidence = event_confidence,
+        event_evidence_score = event_evidence_score,
+        sv_support_score = sv_support_score,
+        graph_complexity_score = graph_complexity_score,
+        chromosome_diversity_score = chromosome_diversity_score,
+        chain_support_score = chain_support_score,
+        cycle_support_score = cycle_support_score
+    )
 }
 
 build_collapsed_event_breakpoints <- function(event_summary, details, detail_ids,

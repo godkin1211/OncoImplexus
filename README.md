@@ -138,6 +138,13 @@ results$chromoplexy$summary
 # Event-level collapsed calls
 results$chromoplexy$collapsed_events$event_summary
 results$chromoplexy$collapsed_events$gene_event_summary
+
+# QC components behind the event-level score
+results$chromoplexy$collapsed_events$event_summary[
+  , c("event_qc_score", "event_evidence_score", "sv_support_score",
+      "graph_complexity_score", "chromosome_diversity_score",
+      "driver_impact_score")
+]
 ```
 
 For an existing chromoplexy result, event collapse and gene annotation can also
@@ -148,6 +155,48 @@ events <- collapse_chromoplexy_chains(
   chromoplexy_result = results$chromoplexy,
   gene_granges = gene_granges,
   breakpoint_padding = 1000
+)
+```
+
+### 4. Cohort-Level Chromoplexy Interpretation
+
+After processing multiple samples, summarize collapsed chromoplexy events across
+the cohort:
+
+```r
+cohort_cp <- summarize_chromoplexy_cohort_events(
+  results = list(Patient_A = results_a, Patient_B = results_b),
+  output_dir = "chromoplexy_cohort_summary"
+)
+
+cohort_cp$sample_summary
+cohort_cp$event_summary
+cohort_cp$gene_summary
+cohort_cp$breakpoint_region_summary
+```
+
+Run functional enrichment on chromoplexy-affected genes. `clusterProfiler` is an
+optional dependency and is only required for this step:
+
+```r
+enrich <- run_chromoplexy_enrichment(
+  cohort_cp,
+  organism_db = "org.Hs.eg.db",
+  kegg_organism = "hsa",
+  output_dir = "chromoplexy_enrichment"
+)
+
+summarize_chromoplexy_pathways(enrich, top_n = 10)
+```
+
+Visualize one collapsed chromoplexy event as a breakpoint graph:
+
+```r
+plot_collapsed_chromoplexy_event(
+  results$chromoplexy,
+  event_id = "CE001",
+  sample_name = "Patient_A",
+  genome = "hg38"
 )
 ```
 

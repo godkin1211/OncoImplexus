@@ -467,6 +467,24 @@ if (!is.null(res$chromoplexy$collapsed_events) &&
 }
 ```
 
+```{r chromoplexy_collapsed_event_plot, fig.height=5.5, fig.width=10}
+if (!is.null(res$chromoplexy$collapsed_events) &&
+    !is.null(res$chromoplexy$collapsed_events$event_summary) &&
+    nrow(res$chromoplexy$collapsed_events$event_summary) > 0) {
+  top_event <- res$chromoplexy$collapsed_events$event_summary$collapsed_event_id[1]
+  tryCatch({
+    plot_collapsed_chromoplexy_event(
+      res$chromoplexy,
+      event_id = top_event,
+      sample_name = sname,
+      genome = gen
+    )
+  }, error = function(e) {
+    message("Collapsed chromoplexy event plot unavailable: ", e$message)
+  })
+}
+```
+
 ```{r chromoplexy_details}
 if (!is.null(res$chromoplexy) && res$chromoplexy$total_chains > 0) {
   cp_sum <- res$chromoplexy$summary

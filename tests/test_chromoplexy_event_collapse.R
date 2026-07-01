@@ -39,12 +39,22 @@ stopifnot(all(c(
     "collapsed_event_id",
     "event_qc_score",
     "event_confidence",
+    "event_evidence_score",
+    "sv_support_score",
+    "graph_complexity_score",
+    "chromosome_diversity_score",
+    "chain_support_score",
+    "driver_impact_score",
+    "event_priority_score",
     "n_unique_svs",
     "n_breakpoints"
 ) %in% colnames(res$collapsed_events$event_summary)))
 
 score <- res$collapsed_events$event_summary$event_qc_score[1]
 stopifnot(!is.na(score), score >= 0, score <= 1)
+stopifnot(res$collapsed_events$event_summary$sv_support_score[1] >= 0)
+stopifnot(res$collapsed_events$event_summary$event_priority_score[1] >= 0)
+stopifnot(res$collapsed_events$event_summary$event_priority_score[1] <= 1)
 
 stopifnot(nrow(res$collapsed_events$gene_detail) >= 1)
 stopifnot("TP53" %in% res$collapsed_events$gene_detail$symbol)

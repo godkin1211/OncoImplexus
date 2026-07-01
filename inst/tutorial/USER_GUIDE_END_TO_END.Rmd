@@ -173,6 +173,16 @@ event-level and are usually better for downstream biological interpretation:
 - `event_breakpoints`: breakpoint nodes assigned to each collapsed event.
 - `gene_detail`, `event_gene_summary`, `gene_event_summary`: gene impact tables.
 
+The event-level QC score is decomposed into interpretable components:
+
+```{r eval=FALSE}
+results$chromoplexy$collapsed_events$event_summary[
+  , c("event_qc_score", "event_evidence_score", "sv_support_score",
+      "graph_complexity_score", "chromosome_diversity_score",
+      "driver_impact_score", "event_priority_score")
+]
+```
+
 You can also annotate an existing chromoplexy result directly:
 
 ```{r eval=FALSE}
@@ -180,6 +190,17 @@ events <- collapse_chromoplexy_chains(
   chromoplexy_result = results$chromoplexy,
   gene_granges = gene_granges,
   breakpoint_padding = 1000
+)
+```
+
+You can plot any collapsed event as a breakpoint graph:
+
+```{r eval=FALSE}
+plot_collapsed_chromoplexy_event(
+  results$chromoplexy,
+  event_id = "CE001",
+  sample_name = "Patient X",
+  genome = "hg38"
 )
 ```
 
@@ -382,6 +403,43 @@ summary_table <- summarize_cohort_results(
 
 # View summary metrics
 head(summary_table)
+```
+
+For chromoplexy-focused interpretation, summarize collapsed events directly:
+
+```{r eval=FALSE}
+cp_cohort <- summarize_chromoplexy_cohort_events(
+  results = "cohort_results",
+  output_dir = "cohort_chromoplexy_summary",
+  breakpoint_window = 1e6
+)
+
+cp_cohort$sample_summary
+cp_cohort$event_summary
+cp_cohort$gene_summary
+cp_cohort$breakpoint_region_summary
+```
+
+The main collapsed chromoplexy cohort outputs are:
+
+| Table | Description |
+|-------|-------------|
+| `sample_summary` | Per-sample chromoplexy burden and max/mean event QC |
+| `event_summary` | All collapsed events with cohort recurrence and priority scores |
+| `gene_summary` | Recurrently impacted genes and driver genes |
+| `breakpoint_region_summary` | Recurrent breakpoint windows across samples |
+
+Functional enrichment can be run directly from the cohort summary:
+
+```{r eval=FALSE}
+enrich <- run_chromoplexy_enrichment(
+  cp_cohort,
+  organism_db = "org.Hs.eg.db",
+  kegg_organism = "hsa",
+  output_dir = "cohort_chromoplexy_enrichment"
+)
+
+summarize_chromoplexy_pathways(enrich, top_n = 10)
 ```
 
 **Master Summary Table Columns:**

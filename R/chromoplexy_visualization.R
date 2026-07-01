@@ -67,6 +67,227 @@ plot_chromoplexy <- function(chromoplexy_result,
     }
 }
 
+#' Plot a collapsed chromoplexy event graph
+#'
+#' Visualizes one event-level chromoplexy component from
+#' \code{collapse_chromoplexy_chains()}. Nodes are breakpoints, edges are the
+#' chain graph edge types, and optional labels show genes overlapping each
+#' breakpoint.
+#'
+#' @param chromoplexy_result Result from \code{detect_chromoplexy()} or
+#'   \code{detect_chromoanagenesis()}.
+#' @param event_id Collapsed event ID such as "CE001". If NULL, the first event
+#'   in the summary table is plotted.
+#' @param sample_name Optional sample label for the plot title.
+#' @param genome Reference genome ("hg19" or "hg38").
+#' @param show_genes Whether to show gene labels at breakpoints.
+#' @param max_gene_labels Maximum number of breakpoint gene labels to draw.
+#' @return A ggplot object.
+#' @export
+plot_collapsed_chromoplexy_event <- function(chromoplexy_result,
+                                             event_id = NULL,
+                                             sample_name = "",
+                                             genome = "hg19",
+                                             show_genes = TRUE,
+                                             max_gene_labels = 20) {
+    if (!requireNamespace("ggplot2", quietly = TRUE)) {
+        stop("Package 'ggplot2' is required for plotting.")
+    }
+    if (!is.null(chromoplexy_result$chromoplexy)) {
+        chromoplexy_result <- chromoplexy_result$chromoplexy
+    }
+    ce <- chromoplexy_result$collapsed_events
+    if (is.null(ce) || is.null(ce$event_summary) || nrow(ce$event_summary) == 0) {
+        stop("No collapsed chromoplexy events available")
+    }
+
+    events <- ce$event_summary
+    if (is.null(event_id)) {
+        event_id <- events$collapsed_event_id[1]
+    } else if (is.numeric(event_id)) {
+        event_id <- events$collapsed_event_id[event_id[1]]
+    }
+    if (!event_id %in% events$collapsed_event_id) {
+        stop("event_id not found in collapsed event summary")
+    }
+
+    bp <- ce$event_breakpoints[ce$event_breakpoints$collapsed_event_id == event_id, , drop = FALSE]
+    bp <- unique(bp[, c("breakpoint_id", "chrom", "pos"), drop = FALSE])
+    if (nrow(bp) == 0) {
+        stop("Selected collapsed event has no breakpoint table")
+    }
+
+    edge_df <- build_collapsed_event_edge_table(chromoplexy_result, ce, event_id)
+    chroms <- sort(unique(c(bp$chrom, edge_df$chrom1, edge_df$chrom2)))
+    chr_lengths <- if (genome == "hg38") info_mappa_hg38 else info_mappa
+    chr_info <- data.frame(
+        chrom = chroms,
+        length = vapply(chroms, function(chr) {
+            idx <- which(chr_lengths$V1 == chr)
+            if (length(idx) > 0) chr_lengths$tot[idx[1]] else max(bp$pos[bp$chrom == chr], na.rm = TRUE)
+        }, numeric(1)),
+        y = seq(length(chroms), 1),
+        stringsAsFactors = FALSE
+    )
+
+    bp <- merge(bp, chr_info[, c("chrom", "y")], by = "chrom", all.x = TRUE)
+    if (nrow(edge_df) > 0) {
+        edge_df <- merge(edge_df, chr_info[, c("chrom", "y")], by.x = "chrom1", by.y = "chrom", all.x = TRUE)
+        colnames(edge_df)[colnames(edge_df) == "y"] <- "y1"
+        edge_df <- merge(edge_df, chr_info[, c("chrom", "y")], by.x = "chrom2", by.y = "chrom", all.x = TRUE)
+        colnames(edge_df)[colnames(edge_df) == "y"] <- "y2"
+    }
+
+    p <- ggplot2::ggplot()
+    p <- p + ggplot2::geom_segment(
+        data = chr_info,
+        ggplot2::aes(x = 0, xend = length, y = y, yend = y),
+        color = "gray75",
+        linewidth = 3,
+        lineend = "round"
+    )
+    p <- p + ggplot2::geom_text(
+        data = chr_info,
+        ggplot2::aes(x = 0, y = y, label = chrom),
+        hjust = 1.2,
+        size = 3.5
+    )
+
+    if (nrow(edge_df) > 0) {
+        same_chr <- edge_df[edge_df$chrom1 == edge_df$chrom2, , drop = FALSE]
+        inter_chr <- edge_df[edge_df$chrom1 != edge_df$chrom2, , drop = FALSE]
+        if (nrow(same_chr) > 0) {
+            p <- p + ggplot2::geom_segment(
+                data = same_chr,
+                ggplot2::aes(x = pos1, xend = pos2, y = y1 + 0.08, yend = y2 + 0.08, color = edge_type),
+                linewidth = 0.8,
+                alpha = 0.8
+            )
+        }
+        if (nrow(inter_chr) > 0) {
+            p <- p + ggplot2::geom_curve(
+                data = inter_chr,
+                ggplot2::aes(x = pos1, xend = pos2, y = y1, yend = y2, color = edge_type),
+                curvature = 0.18,
+                linewidth = 0.8,
+                alpha = 0.75
+            )
+        }
+    }
+
+    p <- p + ggplot2::geom_point(
+        data = bp,
+        ggplot2::aes(x = pos, y = y),
+        color = "black",
+        fill = "#F4D35E",
+        shape = 21,
+        size = 2.6,
+        stroke = 0.6
+    )
+
+    if (show_genes && !is.null(ce$gene_detail) && nrow(ce$gene_detail) > 0) {
+        labels <- collapsed_event_gene_labels(ce$gene_detail, event_id, max_gene_labels)
+        labels <- merge(labels, bp, by = "breakpoint_id", all.x = TRUE)
+        if (nrow(labels) > 0) {
+            p <- p + ggplot2::geom_text(
+                data = labels,
+                ggplot2::aes(x = pos, y = y + 0.25, label = label),
+                size = 3,
+                angle = 25,
+                hjust = 0
+            )
+        }
+    }
+
+    event_row <- events[events$collapsed_event_id == event_id, , drop = FALSE]
+    subtitle <- sprintf(
+        "%s | %s | %d SVs, %d breakpoints, %d chromosomes",
+        event_row$event_confidence[1],
+        round(event_row$event_qc_score[1], 3),
+        event_row$n_unique_svs[1],
+        event_row$n_breakpoints[1],
+        event_row$n_chromosomes[1]
+    )
+
+    p + ggplot2::scale_color_manual(
+        values = c(
+            TRANSLOCATION = "#C44536",
+            ADJACENCY = "#1976D2",
+            DELETION_BRIDGE = "#6A4C93"
+        ),
+        drop = FALSE
+    ) +
+        ggplot2::labs(
+            title = paste(trimws(sample_name), "Collapsed Chromoplexy Event", event_id),
+            subtitle = subtitle,
+            x = "Genomic position (bp)",
+            y = "",
+            color = "Edge type"
+        ) +
+        ggplot2::theme_minimal() +
+        ggplot2::theme(
+            axis.text.y = ggplot2::element_blank(),
+            axis.ticks.y = ggplot2::element_blank(),
+            panel.grid.major.y = ggplot2::element_blank(),
+            panel.grid.minor = ggplot2::element_blank(),
+            plot.title = ggplot2::element_text(face = "bold")
+        )
+}
+
+build_collapsed_event_edge_table <- function(chromoplexy_result, collapsed_events, event_id) {
+    chain_map <- collapsed_events$chain_to_event
+    if (is.null(chain_map) || nrow(chain_map) == 0) return(data.frame())
+    chain_ids <- chain_map$chain_id[chain_map$collapsed_event_id == event_id]
+    rows <- list()
+    for (detail in chromoplexy_result$chain_details) {
+        if (!detail$summary$chain_id %in% chain_ids) next
+        nodes <- as.character(detail$chain$nodes)
+        edge_types <- as.character(detail$chain$edge_types)
+        if (length(nodes) < 2 || length(edge_types) == 0) next
+        for (i in seq_len(min(length(edge_types), length(nodes) - 1))) {
+            from <- parse_breakpoint_node(nodes[i])
+            to <- parse_breakpoint_node(nodes[i + 1])
+            if (is.null(from) || is.null(to)) next
+            rows[[length(rows) + 1]] <- data.frame(
+                from = nodes[i],
+                to = nodes[i + 1],
+                chrom1 = from$chrom,
+                pos1 = from$pos,
+                chrom2 = to$chrom,
+                pos2 = to$pos,
+                edge_type = edge_types[i],
+                stringsAsFactors = FALSE
+            )
+        }
+    }
+    if (length(rows) == 0) return(data.frame())
+    unique(do.call(rbind, rows))
+}
+
+parse_breakpoint_node <- function(node) {
+    parsed <- strsplit(as.character(node), ":", fixed = TRUE)[[1]]
+    if (length(parsed) < 2) return(NULL)
+    list(chrom = parsed[1], pos = suppressWarnings(as.integer(parsed[2])))
+}
+
+collapsed_event_gene_labels <- function(gene_detail, event_id, max_gene_labels) {
+    sub <- gene_detail[gene_detail$collapsed_event_id == event_id, , drop = FALSE]
+    if (nrow(sub) == 0) return(data.frame())
+    rows <- lapply(sort(unique(sub$breakpoint_id)), function(bp) {
+        genes <- sort(unique(sub$symbol[sub$breakpoint_id == bp]))
+        genes <- genes[nzchar(genes)]
+        if (length(genes) == 0) return(NULL)
+        data.frame(
+            breakpoint_id = bp,
+            label = paste(head(genes, 3), collapse = ","),
+            stringsAsFactors = FALSE
+        )
+    })
+    out <- bind_rows_or_empty(rows)
+    if (nrow(out) > max_gene_labels) out <- out[seq_len(max_gene_labels), , drop = FALSE]
+    out
+}
+
 
 #' Create a single chromoplexy chain plot
 #'

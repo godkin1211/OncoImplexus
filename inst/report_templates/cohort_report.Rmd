@@ -23,6 +23,11 @@ data_list <- readRDS(params$data_file)
 cohort <- data_list$cohort
 res_list <- cohort@results
 n_samples <- length(cohort@sample_ids)
+cp_cohort <- tryCatch({
+  summarize_chromoplexy_cohort_events(res_list)
+}, error = function(e) {
+  NULL
+})
 ```
 
 # 1. Cohort Overview
@@ -149,7 +154,49 @@ if (!is.null(gene_df) && nrow(gene_df) > 0) {
 }
 ```
 
-# 4. Sample Detail Catalog
+# 4. Collapsed Chromoplexy Cohort Summary
+
+Event-level chromoplexy interpretation after collapsing redundant chain calls.
+
+```{r collapsed_chromoplexy_sample_summary}
+if (!is.null(cp_cohort) && nrow(cp_cohort$sample_summary) > 0) {
+  datatable(cp_cohort$sample_summary,
+            filter = "top",
+            options = list(pageLength = 15, scrollX = TRUE),
+            caption = "Collapsed Chromoplexy Sample Summary")
+} else {
+  cat("No collapsed chromoplexy cohort summary available.")
+}
+```
+
+```{r recurrent_chromoplexy_genes}
+if (!is.null(cp_cohort) && nrow(cp_cohort$gene_summary) > 0) {
+  gene_tbl <- cp_cohort$gene_summary
+  show_cols <- intersect(c("symbol", "gene_type", "is_driver", "n_samples",
+                           "recurrence_fraction", "n_collapsed_events",
+                           "samples", "max_event_qc_score"),
+                         colnames(gene_tbl))
+  datatable(gene_tbl[, show_cols],
+            filter = "top",
+            options = list(pageLength = 20, scrollX = TRUE),
+            caption = "Recurrently Impacted Chromoplexy Genes")
+} else {
+  cat("No recurrent chromoplexy gene impacts available.")
+}
+```
+
+```{r recurrent_breakpoint_regions}
+if (!is.null(cp_cohort) && nrow(cp_cohort$breakpoint_region_summary) > 0) {
+  datatable(cp_cohort$breakpoint_region_summary,
+            filter = "top",
+            options = list(pageLength = 20, scrollX = TRUE),
+            caption = "Recurrent Chromoplexy Breakpoint Regions")
+} else {
+  cat("No recurrent chromoplexy breakpoint regions available.")
+}
+```
+
+# 5. Sample Detail Catalog
 
 Detailed classification for every sample in the cohort.
 

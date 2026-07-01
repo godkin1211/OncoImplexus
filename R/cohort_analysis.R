@@ -468,3 +468,316 @@ summarize_cohort_results <- function(results_dir, output_csv = "cohort_summary.c
     message("Summary saved to ", output_csv)
     return(final_df)
 }
+
+#' Summarize collapsed chromoplexy events across a cohort
+#'
+#' Aggregates event-level chromoplexy calls produced by
+#' \code{collapse_chromoplexy_chains()} across many samples. The output is
+#' designed for recurrent gene, recurrent breakpoint region, and per-sample
+#' burden analysis.
+#'
+#' @param results A named list of chromoanagenesis results, an
+#'   \code{OncoImplexusCohort} object, or a directory containing result
+#'   \code{.rds} files.
+#' @param output_dir Optional directory. If supplied, summary tables are written
+#'   as TSV files.
+#' @param breakpoint_window Window size in bp for recurrent breakpoint region
+#'   aggregation.
+#' @return A list containing sample, event, gene, chromosome, and breakpoint
+#'   region summary tables.
+#' @export
+summarize_chromoplexy_cohort_events <- function(results,
+                                                output_dir = NULL,
+                                                breakpoint_window = 1e6) {
+    results_list <- coerce_chromoplexy_results_list(results)
+    if (length(results_list) == 0) {
+        stop("No chromoanagenesis results found")
+    }
+
+    event_rows <- list()
+    gene_rows <- list()
+    breakpoint_rows <- list()
+    chromosome_rows <- list()
+    sample_rows <- list()
+
+    for (sid in names(results_list)) {
+        res <- unwrap_chromoanagenesis_result(results_list[[sid]])
+        cp <- if (!is.null(res$chromoplexy)) res$chromoplexy else res
+        ce <- cp$collapsed_events
+        if (is.null(ce) || is.null(ce$event_summary)) {
+            ce <- if (!is.null(cp$summary)) collapse_chromoplexy_chains(cp) else empty_collapsed_chromoplexy_events()
+        }
+
+        events <- ce$event_summary
+        if (!is.null(events) && nrow(events) > 0) {
+            events$sample_id <- sid
+            events$cohort_event_id <- paste(sid, events$collapsed_event_id, sep = ":")
+            event_rows[[sid]] <- events
+
+            event_chroms <- unique(unlist(strsplit(as.character(events$chromosomes_involved), ","), use.names = FALSE))
+            event_chroms <- event_chroms[nzchar(event_chroms)]
+            if (length(event_chroms) > 0) {
+                chromosome_rows[[sid]] <- data.frame(
+                    sample_id = sid,
+                    chrom = event_chroms,
+                    stringsAsFactors = FALSE
+                )
+            }
+        }
+
+        if (!is.null(ce$gene_detail) && nrow(ce$gene_detail) > 0) {
+            genes <- unique(ce$gene_detail[, intersect(c(
+                "collapsed_event_id", "gene_id", "symbol", "gene_type",
+                "is_driver", "chrom", "breakpoint_id"
+            ), colnames(ce$gene_detail)), drop = FALSE])
+            if (!"gene_id" %in% colnames(genes)) genes$gene_id <- genes$symbol
+            if (!"gene_type" %in% colnames(genes)) genes$gene_type <- "Unknown"
+            if (!"is_driver" %in% colnames(genes)) genes$is_driver <- FALSE
+            if (!"chrom" %in% colnames(genes)) genes$chrom <- ""
+            genes$sample_id <- sid
+            genes$cohort_event_id <- paste(sid, genes$collapsed_event_id, sep = ":")
+            gene_rows[[sid]] <- genes
+        } else if (!is.null(events) && nrow(events) > 0 && "genes" %in% colnames(events)) {
+            gene_rows[[sid]] <- event_summary_gene_rows(events, sid)
+        }
+
+        if (!is.null(ce$event_breakpoints) && nrow(ce$event_breakpoints) > 0) {
+            bp <- ce$event_breakpoints
+            bp$sample_id <- sid
+            bp$cohort_event_id <- paste(sid, bp$collapsed_event_id, sep = ":")
+            bp$window_start <- floor((as.numeric(bp$pos) - 1) / breakpoint_window) * breakpoint_window + 1
+            bp$window_end <- bp$window_start + breakpoint_window - 1
+            breakpoint_rows[[sid]] <- bp
+        }
+
+        sample_rows[[sid]] <- summarize_single_chromoplexy_sample(sid, res, ce)
+    }
+
+    sample_summary <- do.call(rbind, sample_rows)
+    event_summary <- bind_rows_or_empty(event_rows)
+    gene_detail <- bind_rows_or_empty(gene_rows)
+    breakpoint_detail <- bind_rows_or_empty(breakpoint_rows)
+    chromosome_detail <- bind_rows_or_empty(chromosome_rows)
+
+    gene_summary <- summarize_recurrent_chromoplexy_genes(gene_detail, event_summary, length(results_list))
+    event_summary <- add_cohort_recurrence_to_events(event_summary, gene_detail, gene_summary)
+    chromosome_summary <- summarize_recurrent_chromosomes(chromosome_detail)
+    breakpoint_region_summary <- summarize_recurrent_breakpoint_regions(breakpoint_detail)
+
+    out <- list(
+        sample_summary = sample_summary,
+        event_summary = event_summary,
+        gene_summary = gene_summary,
+        chromosome_summary = chromosome_summary,
+        breakpoint_region_summary = breakpoint_region_summary,
+        gene_detail = gene_detail,
+        breakpoint_detail = breakpoint_detail,
+        parameters = list(
+            n_samples = length(results_list),
+            breakpoint_window = breakpoint_window
+        )
+    )
+
+    if (!is.null(output_dir)) {
+        if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+        write_summary_tsv(out$sample_summary, file.path(output_dir, "chromoplexy_sample_summary.tsv"))
+        write_summary_tsv(out$event_summary, file.path(output_dir, "chromoplexy_collapsed_event_summary.tsv"))
+        write_summary_tsv(out$gene_summary, file.path(output_dir, "chromoplexy_recurrent_gene_summary.tsv"))
+        write_summary_tsv(out$chromosome_summary, file.path(output_dir, "chromoplexy_recurrent_chromosome_summary.tsv"))
+        write_summary_tsv(out$breakpoint_region_summary, file.path(output_dir, "chromoplexy_recurrent_breakpoint_regions.tsv"))
+        write_summary_tsv(out$gene_detail, file.path(output_dir, "chromoplexy_gene_detail.tsv"))
+        write_summary_tsv(out$breakpoint_detail, file.path(output_dir, "chromoplexy_breakpoint_detail.tsv"))
+    }
+
+    out
+}
+
+coerce_chromoplexy_results_list <- function(results) {
+    if (inherits(results, "OncoImplexusCohort")) {
+        out <- results@results
+    } else if (is.character(results) && length(results) == 1 && dir.exists(results)) {
+        files <- list.files(results, pattern = "\\.rds$", full.names = TRUE)
+        out <- lapply(files, readRDS)
+        names(out) <- clean_result_sample_ids(files)
+    } else if (is.list(results)) {
+        out <- results
+    } else {
+        stop("results must be a named list, OncoImplexusCohort object, or RDS directory")
+    }
+
+    if (is.null(names(out)) || any(!nzchar(names(out)))) {
+        names(out) <- paste0("Sample_", seq_along(out))
+    }
+    out
+}
+
+clean_result_sample_ids <- function(files) {
+    ids <- sub("\\.rds$", "", basename(files))
+    ids <- sub("_chromoanagenesis$", "", ids)
+    ids <- sub("_result$", "", ids)
+    ids
+}
+
+unwrap_chromoanagenesis_result <- function(obj) {
+    if (is.list(obj) && "results" %in% names(obj)) obj$results else obj
+}
+
+summarize_single_chromoplexy_sample <- function(sample_id, res, collapsed_events) {
+    cp <- if (!is.null(res$chromoplexy)) res$chromoplexy else res
+    events <- collapsed_events$event_summary
+    gene_summary <- collapsed_events$gene_event_summary
+
+    data.frame(
+        sample_id = sample_id,
+        analysis_mode = if (!is.null(res$analysis_mode)) res$analysis_mode else if (!is.null(cp$analysis_mode)) cp$analysis_mode else NA_character_,
+        total_chains = if (!is.null(cp$total_chains)) cp$total_chains else 0,
+        likely_chains = if (!is.null(cp$likely_chromoplexy)) cp$likely_chromoplexy else 0,
+        possible_chains = if (!is.null(cp$possible_chromoplexy)) cp$possible_chromoplexy else 0,
+        n_collapsed_events = if (!is.null(events)) nrow(events) else 0,
+        n_high_confidence_events = if (!is.null(events) && nrow(events) > 0) sum(events$event_confidence == "High", na.rm = TRUE) else 0,
+        mean_event_qc_score = if (!is.null(events) && nrow(events) > 0) mean(events$event_qc_score, na.rm = TRUE) else NA_real_,
+        max_event_qc_score = if (!is.null(events) && nrow(events) > 0) max(events$event_qc_score, na.rm = TRUE) else NA_real_,
+        n_genes = if (!is.null(gene_summary) && nrow(gene_summary) > 0) length(unique(gene_summary$symbol)) else 0,
+        n_driver_genes = if (!is.null(gene_summary) && nrow(gene_summary) > 0 && "is_driver" %in% colnames(gene_summary)) {
+            length(unique(gene_summary$symbol[gene_summary$is_driver]))
+        } else 0,
+        driver_genes = if (!is.null(gene_summary) && nrow(gene_summary) > 0 && "is_driver" %in% colnames(gene_summary)) {
+            paste(sort(unique(gene_summary$symbol[gene_summary$is_driver])), collapse = ",")
+        } else "",
+        stringsAsFactors = FALSE
+    )
+}
+
+event_summary_gene_rows <- function(events, sample_id) {
+    rows <- list()
+    for (i in seq_len(nrow(events))) {
+        genes <- unlist(strsplit(as.character(events$genes[i]), ","), use.names = FALSE)
+        genes <- genes[nzchar(genes)]
+        if (length(genes) == 0) next
+        rows[[length(rows) + 1]] <- data.frame(
+            collapsed_event_id = events$collapsed_event_id[i],
+            gene_id = genes,
+            symbol = genes,
+            gene_type = "Unknown",
+            is_driver = genes %in% get_default_drivers(),
+            sample_id = sample_id,
+            cohort_event_id = paste(sample_id, events$collapsed_event_id[i], sep = ":"),
+            stringsAsFactors = FALSE
+        )
+    }
+    bind_rows_or_empty(rows)
+}
+
+summarize_recurrent_chromoplexy_genes <- function(gene_detail, event_summary, n_samples_total) {
+    if (nrow(gene_detail) == 0) return(data.frame())
+    if (nrow(event_summary) > 0) {
+        event_scores <- event_summary[, intersect(c("cohort_event_id", "event_qc_score", "event_priority_score"), colnames(event_summary)), drop = FALSE]
+        gene_detail <- merge(gene_detail, event_scores, by = "cohort_event_id", all.x = TRUE)
+    }
+    symbols <- sort(unique(gene_detail$symbol[nzchar(gene_detail$symbol)]))
+    rows <- lapply(symbols, function(sym) {
+        sub <- gene_detail[gene_detail$symbol == sym, , drop = FALSE]
+        samples <- sort(unique(sub$sample_id))
+        events <- sort(unique(sub$cohort_event_id))
+        gene_type_value <- if ("gene_type" %in% colnames(sub) && any(!is.na(sub$gene_type))) {
+            sub$gene_type[which(!is.na(sub$gene_type))[1]]
+        } else {
+            "Unknown"
+        }
+        is_driver_value <- if ("is_driver" %in% colnames(sub)) any(sub$is_driver, na.rm = TRUE) else FALSE
+        data.frame(
+            symbol = sym,
+            gene_id = paste(sort(unique(sub$gene_id)), collapse = ","),
+            gene_type = gene_type_value,
+            is_driver = is_driver_value,
+            n_samples = length(samples),
+            recurrence_fraction = length(samples) / n_samples_total,
+            recurrence_score = min(length(samples) / 3, 1),
+            n_collapsed_events = length(events),
+            samples = paste(samples, collapse = ","),
+            cohort_event_ids = paste(events, collapse = ","),
+            chromosomes = if ("chrom" %in% colnames(sub)) paste(sort(unique(sub$chrom)), collapse = ",") else "",
+            mean_event_qc_score = if ("event_qc_score" %in% colnames(sub)) mean_or_na(sub$event_qc_score) else NA_real_,
+            max_event_qc_score = if ("event_qc_score" %in% colnames(sub)) max_or_na(sub$event_qc_score) else NA_real_,
+            stringsAsFactors = FALSE
+        )
+    })
+    out <- do.call(rbind, rows)
+    out[order(-out$n_samples, -out$n_collapsed_events, -out$is_driver, out$symbol), , drop = FALSE]
+}
+
+add_cohort_recurrence_to_events <- function(event_summary, gene_detail, gene_summary) {
+    if (nrow(event_summary) == 0) return(event_summary)
+    event_summary$recurrence_score <- 0
+    if (nrow(gene_detail) > 0 && nrow(gene_summary) > 0) {
+        gs <- gene_summary[, c("symbol", "recurrence_score"), drop = FALSE]
+        gd <- merge(unique(gene_detail[, c("cohort_event_id", "symbol"), drop = FALSE]), gs, by = "symbol", all.x = TRUE)
+        recurrence_by_event <- tapply(gd$recurrence_score, gd$cohort_event_id, max_or_na)
+        recurrence_by_event[is.na(recurrence_by_event)] <- 0
+        hit <- match(event_summary$cohort_event_id, names(recurrence_by_event))
+        event_summary$recurrence_score[!is.na(hit)] <- recurrence_by_event[hit[!is.na(hit)]]
+    }
+    if (!"driver_impact_score" %in% colnames(event_summary)) {
+        event_summary$driver_impact_score <- 0
+    }
+    event_summary$event_cohort_priority_score <- (
+        event_summary$event_qc_score * 0.70 +
+        event_summary$driver_impact_score * 0.20 +
+        event_summary$recurrence_score * 0.10
+    )
+    event_summary[order(-event_summary$event_cohort_priority_score, event_summary$sample_id), , drop = FALSE]
+}
+
+summarize_recurrent_chromosomes <- function(chromosome_detail) {
+    if (nrow(chromosome_detail) == 0) return(data.frame())
+    chroms <- sort(unique(chromosome_detail$chrom))
+    rows <- lapply(chroms, function(chr) {
+        sub <- chromosome_detail[chromosome_detail$chrom == chr, , drop = FALSE]
+        data.frame(
+            chrom = chr,
+            n_samples = length(unique(sub$sample_id)),
+            samples = paste(sort(unique(sub$sample_id)), collapse = ","),
+            stringsAsFactors = FALSE
+        )
+    })
+    out <- do.call(rbind, rows)
+    out[order(-out$n_samples, out$chrom), , drop = FALSE]
+}
+
+summarize_recurrent_breakpoint_regions <- function(breakpoint_detail) {
+    if (nrow(breakpoint_detail) == 0) return(data.frame())
+    keys <- unique(breakpoint_detail[, c("chrom", "window_start", "window_end"), drop = FALSE])
+    rows <- lapply(seq_len(nrow(keys)), function(i) {
+        key <- keys[i, ]
+        sub <- breakpoint_detail[
+            breakpoint_detail$chrom == key$chrom &
+                breakpoint_detail$window_start == key$window_start &
+                breakpoint_detail$window_end == key$window_end,
+            ,
+            drop = FALSE
+        ]
+        data.frame(
+            chrom = key$chrom,
+            window_start = key$window_start,
+            window_end = key$window_end,
+            n_samples = length(unique(sub$sample_id)),
+            n_collapsed_events = length(unique(sub$cohort_event_id)),
+            n_breakpoints = length(unique(paste(sub$sample_id, sub$breakpoint_id, sep = ":"))),
+            samples = paste(sort(unique(sub$sample_id)), collapse = ","),
+            cohort_event_ids = paste(sort(unique(sub$cohort_event_id)), collapse = ","),
+            stringsAsFactors = FALSE
+        )
+    })
+    out <- do.call(rbind, rows)
+    out[order(-out$n_samples, -out$n_collapsed_events, out$chrom, out$window_start), , drop = FALSE]
+}
+
+bind_rows_or_empty <- function(rows) {
+    rows <- Filter(function(x) !is.null(x) && nrow(x) > 0, rows)
+    if (length(rows) == 0) return(data.frame())
+    do.call(rbind, rows)
+}
+
+write_summary_tsv <- function(x, file) {
+    utils::write.table(x, file = file, sep = "\t", quote = FALSE, row.names = FALSE)
+}
