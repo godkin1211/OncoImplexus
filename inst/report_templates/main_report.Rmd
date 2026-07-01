@@ -82,14 +82,24 @@ repair <- report_data$repair_mechanisms
 ### Automated Findings Overview
 ```{r narrative_summary, results="asis"}
 # 1. Gather stats
-n_ct <- sum(res$chromothripsis$classification$classification == "High confidence")
-n_cp <- res$chromoplexy$likely_chromoplexy
-n_cs <- res$chromoanasynthesis$likely_chromoanasynthesis
+n_ct <- if (!is.null(res$chromothripsis) && !is.null(res$chromothripsis$classification)) {
+    sum(res$chromothripsis$classification$classification == "High confidence")
+} else 0
+n_cp <- if (!is.null(res$chromoplexy)) res$chromoplexy$likely_chromoplexy else 0
+n_cp_events <- if (!is.null(res$chromoplexy$collapsed_events) &&
+                   !is.null(res$chromoplexy$collapsed_events$event_summary)) {
+    nrow(res$chromoplexy$collapsed_events$event_summary)
+} else 0
+n_cs <- if (!is.null(res$chromoanasynthesis)) res$chromoanasynthesis$likely_chromoanasynthesis else 0
 
 # 2. Build summary sentence
 findings <- c()
 if (n_ct > 0) findings <- c(findings, sprintf("**%d high-confidence Chromothripsis** event(s)", n_ct))
-if (n_cp > 0) findings <- c(findings, sprintf("**%d likely Chromoplexy** chain(s)", n_cp))
+if (n_cp_events > 0) {
+    findings <- c(findings, sprintf("**%d collapsed Chromoplexy** event(s)", n_cp_events))
+} else if (n_cp > 0) {
+    findings <- c(findings, sprintf("**%d likely Chromoplexy** chain(s)", n_cp))
+}
 if (n_cs > 0) findings <- c(findings, sprintf("**%d likely Chromoanasynthesis** region(s)", n_cs))
 
 summary_text <- if (length(findings) > 0) {
@@ -128,10 +138,12 @@ sum_df <- res$integrated_summary
 # Transpose for better view
 sum_t <- data.frame(
   Metric = c("Chromothripsis (High Conf)", "Chromothripsis (Low Conf)", 
-             "Chromoplexy (Likely)", "Chromoplexy (Possible)", 
+             "Chromoplexy (Likely Chains)", "Chromoplexy (Possible Chains)",
+             "Chromoplexy (Collapsed Events)",
              "Chromoanasynthesis (Likely)", "Chromoanasynthesis (Possible)"),
   Count = c(sum_df$chromothripsis_high_confidence, sum_df$chromothripsis_low_confidence,
             sum_df$chromoplexy_likely, sum_df$chromoplexy_possible,
+            if ("chromoplexy_collapsed_events" %in% colnames(sum_df)) sum_df$chromoplexy_collapsed_events else NA,
             sum_df$chromoanasynthesis_likely, sum_df$chromoanasynthesis_possible)
 )
 
@@ -431,6 +443,30 @@ if (!is.null(res$chromothripsis) && (res$chromothripsis$n_high_confidence > 0 ||
 ## 2. Chromoplexy
 Characterized by chained translocations across multiple chromosomes.
 
+```{r chromoplexy_collapsed_events}
+if (!is.null(res$chromoplexy$collapsed_events) &&
+    !is.null(res$chromoplexy$collapsed_events$event_summary) &&
+    nrow(res$chromoplexy$collapsed_events$event_summary) > 0) {
+  cp_events <- res$chromoplexy$collapsed_events$event_summary
+  if ("event_qc_score" %in% colnames(cp_events)) {
+    cp_events$event_qc_score <- round(cp_events$event_qc_score, 3)
+  }
+  display_cols <- c(
+    "collapsed_event_id", "event_confidence", "event_qc_score",
+    "n_chains", "representative_chain_id", "n_unique_svs",
+    "n_breakpoints", "n_chromosomes", "chromosomes_involved",
+    "n_genes", "driver_genes"
+  )
+  display_cols <- intersect(display_cols, colnames(cp_events))
+  datatable(cp_events[, display_cols],
+            options = list(scrollX = TRUE),
+            filter = "top",
+            caption = "Collapsed Chromoplexy Events")
+} else {
+  cat("No collapsed likely chromoplexy events available.")
+}
+```
+
 ```{r chromoplexy_details}
 if (!is.null(res$chromoplexy) && res$chromoplexy$total_chains > 0) {
   cp_sum <- res$chromoplexy$summary
@@ -478,11 +514,14 @@ if (!is.null(res$chromoplexy) && res$chromoplexy$total_chains > 0) {
   display_cols <- c("chain_id", "n_chromosomes", "n_translocations", "classification", "repair_signature", "combined_score")
   display_cols <- intersect(display_cols, colnames(cp_sum))
   
-  datatable(cp_sum[, display_cols], 
-            options = list(scrollX = TRUE),
-            filter = "top",
-            caption = "Chromoplexy Chains") %>%
-    formatStyle("repair_signature", color = "#311b92", fontWeight = "bold")
+  p_dt <- datatable(cp_sum[, display_cols], 
+                    options = list(scrollX = TRUE),
+                    filter = "top",
+                    caption = "Chromoplexy Chains")
+  if ("repair_signature" %in% display_cols) {
+    p_dt <- p_dt %>% formatStyle("repair_signature", color = "#311b92", fontWeight = "bold")
+  }
+  p_dt
 } else {
   cat("No chromoplexy chains detected.")
 }

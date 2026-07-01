@@ -23,6 +23,10 @@ detect_chromoplexy(
   max_neighbors = 3,
   max_adjacency_streak = 3,
   genome = "hg19",
+  collapse_chains = TRUE,
+  collapse_classifications = c("Likely chromoplexy"),
+  gene_granges = NULL,
+  breakpoint_padding = 1000,
   verbose = TRUE
 )
 }
@@ -63,6 +67,16 @@ Prevents exponential explosion in highly connected graphs.}
 \item{max_adjacency_streak}{Maximum number of consecutive adjacency edges (default: 3)}
 
 \item{genome}{Reference genome for calculating genomic distances (default: "hg19")}
+
+\item{collapse_chains}{Collapse redundant chain enumerations into event-level
+connected components (default: TRUE)}
+
+\item{collapse_classifications}{Chain classifications to include in collapsed
+events (default: likely chromoplexy only)}
+
+\item{gene_granges}{Optional GRanges object for collapsed event gene annotation}
+
+\item{breakpoint_padding}{Padding in bp around breakpoints for gene annotation}
 
 \item{verbose}{Print progress messages (default: TRUE)}
 }

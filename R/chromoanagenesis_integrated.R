@@ -18,6 +18,12 @@
 #' @param max_neighbors Maximum number of neighbors to consider for each node in the translocation graph
 #' @param max_region_size Maximum genomic size for a chromoanasynthesis candidate region
 #' @param gene_granges Optional GRanges object containing gene models for driver impact annotation
+#' @param collapse_chromoplexy_chains Collapse redundant chromoplexy chain
+#'   enumerations into event-level components (default: TRUE)
+#' @param chromoplexy_collapse_classifications Chain classifications to include
+#'   in collapsed chromoplexy events (default: likely chromoplexy only)
+#' @param breakpoint_padding Padding in bp around chromoplexy breakpoints for
+#'   gene impact annotation
 #' @param verbose Logical, whether to print detailed progress messages
 #' @return A chromoanagenesis object containing detection results for all mechanisms
 #' @details
@@ -80,6 +86,9 @@ detect_chromoanagenesis <- function(SV.sample,
                                    max_path_search = 50,
                                    max_region_size = 10e6,
                                    max_neighbors = 3,
+                                   collapse_chromoplexy_chains = TRUE,
+                                   chromoplexy_collapse_classifications = c("Likely chromoplexy"),
+                                   breakpoint_padding = 1000,
                                    verbose = TRUE) {
 
     if (verbose) {
@@ -174,6 +183,10 @@ detect_chromoanagenesis <- function(SV.sample,
             min_chromosomes = min_chromoplexy_chromosomes,
             max_path_search = max_path_search, # Pass new parameter
             max_neighbors = max_neighbors, # Pass new parameter
+            collapse_chains = collapse_chromoplexy_chains,
+            collapse_classifications = chromoplexy_collapse_classifications,
+            gene_granges = gene_granges,
+            breakpoint_padding = breakpoint_padding,
             verbose = verbose
         )
 
@@ -297,6 +310,29 @@ create_integrated_summary <- function(results) {
         summary$chromoplexy_likely <- results$chromoplexy$likely_chromoplexy
         summary$chromoplexy_possible <- results$chromoplexy$possible_chromoplexy
         summary$chromoplexy_chains <- results$chromoplexy$total_chains
+        if (!is.null(results$chromoplexy$collapsed_events) &&
+            !is.null(results$chromoplexy$collapsed_events$event_summary)) {
+            cp_events <- results$chromoplexy$collapsed_events$event_summary
+            summary$chromoplexy_collapsed_events <- nrow(cp_events)
+            if (nrow(cp_events) > 0 && "driver_genes" %in% colnames(cp_events)) {
+                drivers <- unique(unlist(strsplit(
+                    paste(cp_events$driver_genes, collapse = ","),
+                    ",",
+                    fixed = TRUE
+                )))
+                drivers <- drivers[nzchar(drivers)]
+                summary$chromoplexy_driver_genes <- if (length(drivers) > 0) {
+                    paste(sort(drivers), collapse = ", ")
+                } else {
+                    "None"
+                }
+            } else {
+                summary$chromoplexy_driver_genes <- "Not annotated"
+            }
+        } else {
+            summary$chromoplexy_collapsed_events <- NA
+            summary$chromoplexy_driver_genes <- "Not analyzed"
+        }
 
         cp_sum <- results$chromoplexy$summary
         if (!is.null(cp_sum) && "classification" %in% colnames(cp_sum) && results$chromoplexy$likely_chromoplexy > 0) {
@@ -396,6 +432,9 @@ print.chromoanagenesis <- function(x, ...) {
         cat(sprintf("  - Likely events:   %d\n", x$chromoplexy$likely_chromoplexy))
         cat(sprintf("  - Possible events: %d\n", x$chromoplexy$possible_chromoplexy))
         cat(sprintf("  - Total chains:    %d\n", x$chromoplexy$total_chains))
+        if ("chromoplexy_collapsed_events" %in% colnames(x$integrated_summary)) {
+            cat(sprintf("  - Collapsed events: %d\n", x$integrated_summary$chromoplexy_collapsed_events))
+        }
         cat(sprintf("  - Chromosomes:     %s\n",
                    x$integrated_summary$chromoplexy_chromosomes))
         cat("\n")
@@ -453,6 +492,17 @@ summary.chromoanagenesis <- function(object, ...) {
         print(object$chromoplexy$summary[, c("chain_id", "n_chromosomes",
                                             "n_translocations", "classification")])
         cat("\n")
+        if (!is.null(object$chromoplexy$collapsed_events) &&
+            nrow(object$chromoplexy$collapsed_events$event_summary) > 0) {
+            cat("Collapsed Chromoplexy Events:\n")
+            show_cols <- intersect(c(
+                "collapsed_event_id", "event_confidence", "event_qc_score",
+                "n_chains", "representative_chain_id", "n_unique_svs",
+                "n_breakpoints", "n_chromosomes", "driver_genes"
+            ), colnames(object$chromoplexy$collapsed_events$event_summary))
+            print(object$chromoplexy$collapsed_events$event_summary[, show_cols, drop = FALSE])
+            cat("\n")
+        }
     }
 
     if (!is.null(object$chromoanasynthesis) && object$chromoanasynthesis$total_regions > 0) {

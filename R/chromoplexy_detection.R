@@ -71,6 +71,12 @@
 #' @param max_neighbors Maximum number of neighbors to consider per node (default: 3)
 #' @param max_adjacency_streak Maximum number of consecutive adjacency edges (default: 3)
 #' @param genome Reference genome for calculating genomic distances (default: "hg19")
+#' @param collapse_chains Collapse redundant chain enumerations into event-level
+#'   connected components (default: TRUE)
+#' @param collapse_classifications Chain classifications to include in collapsed
+#'   events (default: likely chromoplexy only)
+#' @param gene_granges Optional GRanges object for collapsed event gene annotation
+#' @param breakpoint_padding Padding in bp around breakpoints for gene annotation
 #' @param verbose Print progress messages (default: TRUE)
 #' @return A list containing detected chromoplexy chains and summary statistics
 #' @export
@@ -92,6 +98,10 @@ detect_chromoplexy <- function(SV.sample,
                                max_neighbors = 3,
                                max_adjacency_streak = 3, # New parameter
                                genome = "hg19",
+                               collapse_chains = TRUE,
+                               collapse_classifications = c("Likely chromoplexy"),
+                               gene_granges = NULL,
+                               breakpoint_padding = 1000,
                                verbose = TRUE) {
     # Convert to data frame if needed
     if (is(SV.sample, "SVs")) {
@@ -288,6 +298,17 @@ detect_chromoplexy <- function(SV.sample,
         ),
         version = "3.0"
     )
+
+    if (collapse_chains) {
+        result$collapsed_events <- collapse_chromoplexy_chains(
+            chromoplexy_result = result,
+            classifications = collapse_classifications,
+            gene_granges = gene_granges,
+            breakpoint_padding = breakpoint_padding
+        )
+    } else {
+        result$collapsed_events <- empty_collapsed_chromoplexy_events()
+    }
 
     class(result) <- c("chromoplexy_v3", "chromoplexy", "list")
     return(result)
@@ -1320,6 +1341,7 @@ create_empty_chromoplexy_result_v3 <- function(analysis_mode = "SV+CNV chromople
         total_chains = 0,
         likely_chromoplexy = 0,
         possible_chromoplexy = 0,
+        collapsed_events = empty_collapsed_chromoplexy_events(),
         analysis_mode = analysis_mode,
         limitations = limitations,
         version = "3.0"

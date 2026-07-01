@@ -23,6 +23,8 @@ Unlike traditional tools that often focus on a single phenomenon, OncoImplexus s
 ### 3. Biological & Clinical Depth
 - **DNA Repair Fingerprinting**: Quantifies NHEJ, MMBIR, and MMEJ proportions at breakpoints.
 - **Driver Impact Ranking**: Automatically maps catastrophes to core oncogenes and TSGs.
+- **Collapsed Chromoplexy Events**: Collapses redundant chain enumerations into event-level components with QC scores, breakpoint tables, and optional gene impact annotation.
+- **SV-only Long-read Mode**: Supports chromoplexy analysis from SV VCF alone when CNV VCF is unavailable, including ONT/Sniffles2 BND ALT parsing.
 - **Clinical Correlation**: Supports integrated survival analysis and Whole Genome Duplication (WGD) association tests.
 
 ---
@@ -112,6 +114,41 @@ cnv_data <- read_cnv_vcf("tumor.cnv.vcf.gz")
 
 # Run integrated detection
 results <- detect_chromoanagenesis(sv_data, cnv_data, genome = "hg38")
+```
+
+If only an SV VCF is available, OncoImplexus runs SV-only chromoplexy detection
+and skips CNV-dependent chromothripsis/chromoanasynthesis modules:
+
+```r
+sv_data <- read_sv_vcf("tumor.sv.vcf.gz", genome = "hg38")
+gene_granges <- readRDS(
+  system.file("extdata", "hg38_genes.rds", package = "OncoImplexus")
+)
+
+results <- detect_chromoanagenesis(
+  SV.sample = sv_data,
+  CNV.sample = NULL,
+  genome = "hg38",
+  gene_granges = gene_granges
+)
+
+# Chain-level calls
+results$chromoplexy$summary
+
+# Event-level collapsed calls
+results$chromoplexy$collapsed_events$event_summary
+results$chromoplexy$collapsed_events$gene_event_summary
+```
+
+For an existing chromoplexy result, event collapse and gene annotation can also
+be run directly:
+
+```r
+events <- collapse_chromoplexy_chains(
+  chromoplexy_result = results$chromoplexy,
+  gene_granges = gene_granges,
+  breakpoint_padding = 1000
+)
 ```
 
 For a more detailed walkthrough, please refer to the tutorial located at `inst/tutorial/USER_GUIDE_END_TO_END.Rmd`.

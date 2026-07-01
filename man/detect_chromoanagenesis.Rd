@@ -18,6 +18,9 @@ detect_chromoanagenesis(
   max_path_search = 50,
   max_region_size = 1e+07,
   max_neighbors = 3,
+  collapse_chromoplexy_chains = TRUE,
+  chromoplexy_collapse_classifications = c("Likely chromoplexy"),
+  breakpoint_padding = 1000,
   verbose = TRUE
 )
 }
@@ -48,6 +51,15 @@ If NULL, only SV-only chromoplexy detection is run.}
 \item{max_region_size}{Maximum genomic size for a chromoanasynthesis candidate region}
 
 \item{max_neighbors}{Maximum number of neighbors to consider for each node in the translocation graph}
+
+\item{collapse_chromoplexy_chains}{Collapse redundant chromoplexy chain
+enumerations into event-level components (default: TRUE)}
+
+\item{chromoplexy_collapse_classifications}{Chain classifications to include
+in collapsed chromoplexy events (default: likely chromoplexy only)}
+
+\item{breakpoint_padding}{Padding in bp around chromoplexy breakpoints for
+gene impact annotation}
 
 \item{verbose}{Logical, whether to print detailed progress messages}
 }

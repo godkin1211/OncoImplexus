@@ -160,6 +160,27 @@ results <- detect_chromoanagenesis(
 results$analysis_mode
 results$limitations
 results$chromoplexy$summary
+results$chromoplexy$collapsed_events$event_summary
+results$chromoplexy$collapsed_events$gene_event_summary
+```
+
+The `summary` table is chain-level. The `collapsed_events` tables are
+event-level and are usually better for downstream biological interpretation:
+
+- `event_summary`: collapsed chromoplexy events with QC score, representative
+  chain, chromosomes, SV support, and impacted genes when `gene_granges` is supplied.
+- `chain_to_event`: mapping from enumerated chains to collapsed event IDs.
+- `event_breakpoints`: breakpoint nodes assigned to each collapsed event.
+- `gene_detail`, `event_gene_summary`, `gene_event_summary`: gene impact tables.
+
+You can also annotate an existing chromoplexy result directly:
+
+```{r eval=FALSE}
+events <- collapse_chromoplexy_chains(
+  chromoplexy_result = results$chromoplexy,
+  gene_granges = gene_granges,
+  breakpoint_padding = 1000
+)
 ```
 
 ## Step 4: Generating the Interactive HTML Report
@@ -371,6 +392,7 @@ head(summary_table)
 | `classification` | Integrated diagnosis (e.g., "Multiple mechanisms") |
 | `ct_hc` | High Confidence chromothripsis events |
 | `cp_likely` | Likely chromoplexy chains |
+| `cp_collapsed_events` | Collapsed likely chromoplexy events, when available |
 | `cs_likely` | Likely chromoanasynthesis regions |
 | `n_fusions` | Predicted gene fusions |
 

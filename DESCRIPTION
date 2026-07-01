@@ -1,7 +1,7 @@
 Package: OncoImplexus
 Type: Package
 Title: Integrated Detection of Complex Chromosomal Rearrangements in Cancer
-Version: 1.1.0
+Version: 1.2.0
 Date: 2025-01-18
 Author: Chia-Chun Chiu, Wei-Sheng Wu, Chien-Feng Li
 Authors@R: c(
@@ -45,6 +45,7 @@ Collate:
     'chromoplexy_comparison.R'
     'chromoplexy_detection.R'
     'chromoplexy_diagnostics.R'
+    'chromoplexy_event_annotation.R'
     'chromoplexy_statistics.R'
     'chromoplexy_visualization.R'
     'chromothripsis_detection.R'
