@@ -14,7 +14,7 @@ estimate_local_rearrangement_rate(chromosomes, total_SVs, genome_size)
 \item{genome_size}{Genome size}
 }
 \value{
-Local rearrangement rate (μ)
+Local rearrangement rate (mu)
 }
 \description{
 Calculates the expected rate of rearrangements per megabase

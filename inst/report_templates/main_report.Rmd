@@ -529,6 +529,9 @@ The following metrics assess the quality and consistency of the input SV and CNV
 
 ```{r qc_check, results="asis"}
 if (!is.null(qc)) {
+  fmt_pct <- function(x) ifelse(is.na(x), "Not available", sprintf("%.1f%%", x * 100))
+  fmt_bp <- function(x) ifelse(is.na(x), "Not provided", format(round(x), big.mark = ","))
+  has_cnv <- !is.null(qc$cnv_count) && qc$cnv_count > 0
   qc_summary <- data.frame(
     Metric = c("Total SVs", "Inter-chromosomal SV Rate", "Total CNV Segments", 
                "Avg Segment Size (bp)", "Hyper-segmentation Risk (<10kb)", "SV-CNV Overlap Rate"),
@@ -536,17 +539,17 @@ if (!is.null(qc)) {
       qc$sv_count,
       sprintf("%.1f%%", qc$interchromosomal_rate * 100),
       qc$cnv_count,
-      format(round(qc$avg_segment_size), big.mark = ","),
-      sprintf("%.1f%%", qc$hyper_segmentation_risk * 100),
-      sprintf("%.1f%%", qc$sv_cnv_overlap_rate * 100)
+      fmt_bp(qc$avg_segment_size),
+      fmt_pct(qc$hyper_segmentation_risk),
+      fmt_pct(qc$sv_cnv_overlap_rate)
     ),
     Status = c(
       ifelse(qc$sv_count > 0, "OK", "Warning"),
       ifelse(qc$interchromosomal_rate > 0.01, "OK", "Low"),
-      ifelse(qc$cnv_count > 0, "OK", "Warning"),
-      ifelse(qc$avg_segment_size > 5000, "OK", "Warning (Fragmented)"),
-      ifelse(qc$hyper_segmentation_risk < 0.2, "OK", "High Noise"),
-      ifelse(qc$sv_cnv_overlap_rate > 0.9, "OK", "Check Consistency")
+      ifelse(has_cnv, "OK", "Not provided"),
+      ifelse(has_cnv && qc$avg_segment_size > 5000, "OK", ifelse(has_cnv, "Warning (Fragmented)", "Not provided")),
+      ifelse(has_cnv && qc$hyper_segmentation_risk < 0.2, "OK", ifelse(has_cnv, "High Noise", "Not provided")),
+      ifelse(has_cnv && qc$sv_cnv_overlap_rate > 0.9, "OK", ifelse(has_cnv, "Check Consistency", "Not provided"))
     )
   )
   

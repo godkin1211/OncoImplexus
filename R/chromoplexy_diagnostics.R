@@ -210,7 +210,7 @@ diagnose_single_chain <- function(chain_row, result) {
 }
 
 
-#' Compare chromoplexy detection methods
+#' Compare two precomputed chromoplexy result objects
 #'
 #' Compares results from original and enhanced detection methods.
 #'
@@ -221,7 +221,7 @@ diagnose_single_chain <- function(chain_row, result) {
 #' @return Invisibly returns comparison data frame
 #'
 #' @export
-compare_chromoplexy_methods <- function(result_v1, result_v2, verbose = TRUE) {
+compare_chromoplexy_result_versions <- function(result_v1, result_v2, verbose = TRUE) {
 
     if (verbose) {
         cat("\n")

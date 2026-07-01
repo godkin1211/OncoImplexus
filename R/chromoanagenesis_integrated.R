@@ -5,7 +5,8 @@
 #' chromosomal rearrangements.
 #'
 #' @param SV.sample An instance of class SVs or data frame with SV data
-#' @param CNV.sample An instance of class CNVsegs or data frame with CNV data
+#' @param CNV.sample Optional instance of class CNVsegs or data frame with CNV data.
+#'   If NULL, only SV-only chromoplexy detection is run.
 #' @param genome Reference genome ("hg19" or "hg38", default: "hg19")
 #' @param detect_chromothripsis Detect chromothripsis events (default: TRUE)
 #' @param detect_chromoplexy Detect chromoplexy events (default: TRUE)
@@ -67,7 +68,7 @@
 #'
 #' @export
 detect_chromoanagenesis <- function(SV.sample,
-                                   CNV.sample,
+                                   CNV.sample = NULL,
                                    genome = "hg19",
                                    detect_chromothripsis = TRUE,
                                    detect_chromoplexy = TRUE,
@@ -88,7 +89,34 @@ detect_chromoanagenesis <- function(SV.sample,
         cat(rep("=", 70), "\n\n", sep = "")
     }
 
-    results <- list()
+    cnv_n <- if (is.null(CNV.sample)) {
+        0
+    } else if (is(CNV.sample, "CNVsegs")) {
+        length(CNV.sample@chrom)
+    } else {
+        nrow(CNV.sample)
+    }
+    cnv_available <- !is.null(cnv_n) && cnv_n > 0
+
+    if (!cnv_available) {
+        CNV.sample <- NULL
+        if (detect_chromothripsis || detect_chromoanasynthesis) {
+            if (verbose) {
+                cat("CNV data not provided. Running SV-only chromoplexy analysis.\n")
+                cat("  Skipping chromothripsis and chromoanasynthesis modules.\n\n")
+            }
+        }
+        detect_chromothripsis <- FALSE
+        detect_chromoanasynthesis <- FALSE
+    }
+
+    results <- list(
+        analysis_mode = if (cnv_available) "SV+CNV integrated" else "SV-only chromoplexy",
+        limitations = if (cnv_available) character(0) else c(
+            "CNV not provided: chromothripsis and chromoanasynthesis were not evaluated.",
+            "Chromoplexy evidence does not include CN stability or deletion bridge support."
+        )
+    )
 
     # 1. Data quality check
     if (verbose) cat("Step 1: Checking data quality...\n")
@@ -145,7 +173,8 @@ detect_chromoanagenesis <- function(SV.sample,
             CNV.sample = CNV.sample,
             min_chromosomes = min_chromoplexy_chromosomes,
             max_path_search = max_path_search, # Pass new parameter
-            max_neighbors = max_neighbors # Pass new parameter
+            max_neighbors = max_neighbors, # Pass new parameter
+            verbose = verbose
         )
 
         results$chromoplexy <- chromoplexy_result

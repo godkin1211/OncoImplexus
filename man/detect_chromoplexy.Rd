@@ -22,7 +22,8 @@ detect_chromoplexy(
   max_search_depth = 10,
   max_neighbors = 3,
   max_adjacency_streak = 3,
-  genome = "hg19"
+  genome = "hg19",
+  verbose = TRUE
 )
 }
 \arguments{
@@ -52,16 +53,18 @@ detect_chromoplexy(
 
 \item{possible_chromoplexy_threshold}{Minimum criteria met for "Possible chromoplexy" classification (default: 4)}
 
-\item{max_path_search}{Maximum number of paths to explore (default: 10000)}
+\item{max_path_search}{Maximum number of paths to explore (default: 50)}
 
 \item{max_search_depth}{Maximum chain length to explore (default: 10).
 Prevents exponential explosion in highly connected graphs.}
 
-\item{max_neighbors}{Maximum number of neighbors to consider per node (default: 50)}
+\item{max_neighbors}{Maximum number of neighbors to consider per node (default: 3)}
 
 \item{max_adjacency_streak}{Maximum number of consecutive adjacency edges (default: 3)}
 
 \item{genome}{Reference genome for calculating genomic distances (default: "hg19")}
+
+\item{verbose}{Print progress messages (default: TRUE)}
 }
 \value{
 A list containing enhanced chromoplexy detection results

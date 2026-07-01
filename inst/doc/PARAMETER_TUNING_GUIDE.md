@@ -12,17 +12,16 @@ result <- detect_chromoanagenesis(
     CNV.sample = cnv_data,
     
     # Chromothripsis defaults
-    min_cluster_size = 10,
-    min_sv_calls = 10,
+    min_chromothripsis_size = 1,
     
     # Chromoplexy defaults  
-    min_chromosomes = 3,
-    min_translocations = 3,
-    max_cn_change = 1,
+    min_chromoplexy_chromosomes = 3,
+    max_path_search = 50,
+    max_neighbors = 3,
     
     # Chromoanasynthesis defaults
-    cn_gradient_threshold = 0.5,
-    min_sv_density = 3
+    min_chromoanasynthesis_tandem_dups = 3,
+    max_region_size = 10e6
 )
 ```
 
@@ -30,7 +29,7 @@ result <- detect_chromoanagenesis(
 
 ## Chromothripsis Detection Parameters
 
-### `min_cluster_size` (default: 10)
+### `min_chromothripsis_size` (default: 1)
 
 Controls the minimum number of clustered SVs required to consider a region as chromothripsis.
 
@@ -40,11 +39,11 @@ Controls the minimum number of clustered SVs required to consider a region as ch
 | Low-coverage WGS (30-40x) | 7-8 | Lower to compensate for missed calls |
 | Panel sequencing | 5-7 | Limited coverage of breakpoints |
 
-### `min_sv_calls` (default: 10)
+### Input SV count
 
 Minimum total SV calls in sample. Samples below this threshold may not have enough data for reliable detection.
 
-### `min_oscillating_cn` (default: 7)
+### Copy-number oscillation evidence
 
 Minimum oscillating copy number segments. Classic chromothripsis shows 2-state CN oscillations.
 
@@ -56,7 +55,7 @@ Minimum oscillating copy number segments. Classic chromothripsis shows 2-state C
 
 ## Chromoplexy Detection Parameters
 
-### `min_chromosomes` (default: 3)
+### `min_chromoplexy_chromosomes` (default: 3)
 
 Minimum chromosomes involved in a translocation chain.
 
@@ -66,22 +65,22 @@ Minimum chromosomes involved in a translocation chain.
 | 3 | Standard chromoplexy (recommended) |
 | 4+ | High-confidence complex events only |
 
-### `min_translocations` (default: 3)
+### `min_translocations` in `detect_chromoplexy()` (default: 3)
 
 Minimum inter-chromosomal translocations required.
 
-### `max_cn_change` (default: 1)
+### `max_cn_change` in `detect_chromoplexy()` (default: 1)
 
 Maximum copy number change allowed between adjacent segments. Chromoplexy typically shows CN-neutral rearrangements.
 
 - **1**: Strict CN neutrality (classic chromoplexy)
 - **2**: Allow some CN variation (tumors with additional events)
 
-### `adjacency_distance` (default: 10Mb)
+### `adjacency_distance` in `detect_chromoplexy()` (default: 10Mb)
 
 Maximum genomic distance for considering breakpoints as adjacent.
 
-### `max_path_search` (default: 10000)
+### `max_path_search` (default: 50)
 
 Maximum paths to explore during chain detection. Increase for complex samples (>100 translocations).
 
@@ -89,14 +88,14 @@ Maximum paths to explore during chain detection. Increase for complex samples (>
 
 ## Chromoanasynthesis Detection Parameters
 
-### `cn_gradient_threshold` (default: 0.5)
+### `gradient_threshold` in `detect_chromoanasynthesis()` (default: 0.4)
 
 Threshold for detecting copy number gradients (typical of replication-based mechanisms).
 
 - **Higher (0.7-1.0)**: More stringent, captures clear gradients only
 - **Lower (0.3-0.5)**: More sensitive, may include false positives
 
-### `min_sv_density` (default: 3)
+### `min_chromoanasynthesis_tandem_dups` (default: 3)
 
 Minimum SVs per Mb in a region.
 
@@ -120,9 +119,8 @@ result <- detect_chromoanagenesis(sv_data, cnv_data)
 ```r
 result <- detect_chromoanagenesis(
     sv_data, cnv_data,
-    min_cluster_size = 7,
-    min_oscillating_cn = 5,
-    max_cn_change = 2  # Allow more CN variation
+    min_chromothripsis_size = 7,
+    min_chromoanasynthesis_tandem_dups = 2
 )
 ```
 
@@ -130,7 +128,7 @@ result <- detect_chromoanagenesis(
 
 FFPE samples may have artifacts. Consider:
 - Filtering SVs with low support reads
-- Increasing `min_cluster_size` to 12-15
+- Increasing `min_chromothripsis_size` to 12-15
 - Using stricter confidence thresholds
 
 ### Pediatric Tumors
@@ -139,8 +137,8 @@ Some pediatric cancers have simpler genomes:
 ```r
 result <- detect_chromoanagenesis(
     sv_data, cnv_data,
-    min_cluster_size = 8,
-    min_chromosomes = 2
+    min_chromothripsis_size = 8,
+    min_chromoplexy_chromosomes = 2
 )
 ```
 
@@ -180,14 +178,14 @@ result <- detect_chromoanagenesis(
 
 ### Too Many False Positives
 
-- Increase `min_cluster_size`
+- Increase `min_chromothripsis_size`
 - Increase statistical significance thresholds
 - Check input data quality
 
 ### Missing Known Events
 
-- Decrease `min_cluster_size`
-- Lower `cn_gradient_threshold`
+- Decrease `min_chromothripsis_size`
+- Lower `gradient_threshold` when calling `detect_chromoanasynthesis()` directly
 - Check if SVs are being filtered during input parsing
 
 ### Slow Performance

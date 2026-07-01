@@ -24,6 +24,10 @@ compare_chromoplexy_methods <- function(SV.sample,
                                         min_translocations = 3,
                                         genome = "hg19",
                                         verbose = TRUE) {
+    if (is.list(SV.sample) && is.list(CNV.sample) &&
+        !is.null(SV.sample$total_chains) && !is.null(CNV.sample$total_chains)) {
+        return(compare_chromoplexy_result_versions(SV.sample, CNV.sample, verbose = verbose))
+    }
 
     if (verbose) {
         cat("\n")
@@ -341,7 +345,7 @@ create_comparison_summary_df <- function(comparison_results, sample_ids) {
 #' @param comparison_df Summary data frame from create_comparison_summary_df
 #' @return ggplot object
 #' @export
-plot_mechanism_comparison <- function(comparison_df) {
+plot_chromoplexy_method_comparison <- function(comparison_df) {
 
     if (!requireNamespace("ggplot2", quietly = TRUE)) {
         stop("Package 'ggplot2' needed for this function.")

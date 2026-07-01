@@ -658,6 +658,10 @@ detect_chromoplexy_chainfinder <- function(SV.sample,
 }
 
 #' Print method
+#'
+#' @param x A chromoplexy_chainfinder result object
+#' @param ... Additional arguments, currently unused
+#' @return Invisibly returns \code{x}
 #' @export
 print.chromoplexy_chainfinder <- function(x, ...) {
     cat("\n========================================================================\n")

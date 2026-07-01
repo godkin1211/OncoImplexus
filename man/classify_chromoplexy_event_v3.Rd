@@ -9,15 +9,22 @@ classify_chromoplexy_event_v3(
   use_statistical_testing = TRUE,
   fdr_threshold = 0.01,
   likely_threshold = 5,
-  possible_threshold = 4
+  possible_threshold = 4,
+  sv_only = FALSE
 )
 }
 \arguments{
+\item{summary_df}{Chain-level summary data frame}
+
+\item{use_statistical_testing}{Whether to use statistical significance in classification}
+
 \item{fdr_threshold}{FDR threshold for statistical significance (default: 0.01)}
 
 \item{likely_threshold}{Minimum criteria met for "Likely chromoplexy" (default: 5)}
 
 \item{possible_threshold}{Minimum criteria met for "Possible chromoplexy" (default: 4)}
+
+\item{sv_only}{Whether CNV evidence is unavailable and classification should use SV-only criteria}
 }
 \description{
 Classify chromoplexy event (v3)

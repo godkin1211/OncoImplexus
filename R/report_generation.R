@@ -5,7 +5,7 @@ NULL
 #' 
 #' @param result A chromoanagenesis result object from detect_chromoanagenesis()
 #' @param SV.sample The original SV data used for analysis
-#' @param CNV.sample The original CNV data used for analysis
+#' @param CNV.sample Optional original CNV data used for analysis
 #' @param output_file Output HTML filename
 #' @param output_dir Output directory
 #' @param sample_name Sample name
@@ -15,7 +15,7 @@ NULL
 #' @export
 generate_interactive_report <- function(result,
                                       SV.sample,
-                                      CNV.sample,
+                                      CNV.sample = NULL,
                                       output_file = "report.html",
                                       output_dir = "reports/sample_reports",
                                       sample_name = "Sample",

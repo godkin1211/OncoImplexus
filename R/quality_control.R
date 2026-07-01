@@ -7,11 +7,11 @@ NULL
 #' distributions, and consistency checks.
 #'
 #' @param SV.sample Structural variant data (SVs object or data.frame)
-#' @param CNV.sample Copy number data (CNVsegs object or data.frame)
+#' @param CNV.sample Optional copy number data (CNVsegs object or data.frame)
 #' @param genome Reference genome ("hg19" or "hg38")
 #' @return A list containing quality metrics
 #' @export
-assess_data_quality <- function(SV.sample, CNV.sample, genome = "hg19") {
+assess_data_quality <- function(SV.sample, CNV.sample = NULL, genome = "hg19") {
     
     # Standardize inputs
     if (is(SV.sample, "SVs")) {
@@ -20,7 +20,15 @@ assess_data_quality <- function(SV.sample, CNV.sample, genome = "hg19") {
         sv_data_df <- SV.sample
     }
 
-    if (is(CNV.sample, "CNVsegs")) {
+    if (is.null(CNV.sample)) {
+        cnv_data_df <- data.frame(
+            chrom = character(0),
+            start = numeric(0),
+            end = numeric(0),
+            total_cn = numeric(0),
+            stringsAsFactors = FALSE
+        )
+    } else if (is(CNV.sample, "CNVsegs")) {
         cnv_data_df <- as(CNV.sample, "data.frame")
     } else {
         cnv_data_df <- CNV.sample
@@ -46,8 +54,9 @@ assess_data_quality <- function(SV.sample, CNV.sample, genome = "hg19") {
         metrics$small_segments <- sum((cnv_data_df$end - cnv_data_df$start) < 10000)
         metrics$hyper_segmentation_risk <- metrics$small_segments / metrics$cnv_count
     } else {
-        metrics$avg_segment_size <- 0
-        metrics$hyper_segmentation_risk <- 0
+        metrics$avg_segment_size <- NA_real_
+        metrics$small_segments <- 0
+        metrics$hyper_segmentation_risk <- NA_real_
     }
 
     # 3. Consistency Checks
@@ -58,7 +67,11 @@ assess_data_quality <- function(SV.sample, CNV.sample, genome = "hg19") {
     has_chr_prefix_sv <- any(grepl("^chr", sv_chroms))
     has_chr_prefix_cnv <- any(grepl("^chr", cnv_chroms))
     
-    metrics$naming_consistent <- (has_chr_prefix_sv == has_chr_prefix_cnv)
+    metrics$naming_consistent <- if (metrics$cnv_count > 0) {
+        has_chr_prefix_sv == has_chr_prefix_cnv
+    } else {
+        NA
+    }
     
     # 4. Overlap Analysis (Basic)
     # Check how many SV breakpoints fall within defined CNV segments
@@ -83,7 +96,7 @@ assess_data_quality <- function(SV.sample, CNV.sample, genome = "hg19") {
         }
         metrics$sv_cnv_overlap_rate <- overlaps / n_check
     } else {
-        metrics$sv_cnv_overlap_rate <- 0
+        metrics$sv_cnv_overlap_rate <- NA_real_
     }
 
     return(metrics)

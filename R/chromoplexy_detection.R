@@ -67,9 +67,11 @@
 #' @param deletion_bridge_distance Maximum distance for deletion bridges (default: 1Mb)
 #' @param fdr_threshold FDR threshold for statistical significance (default: 0.01)
 #' @param use_statistical_testing Whether to perform statistical testing (default: TRUE)
-#' @param max_path_search Maximum number of paths to explore (default: 10000)
-#' @param max_neighbors Maximum number of neighbors to consider per node (default: 50)
+#' @param max_path_search Maximum number of paths to explore (default: 50)
+#' @param max_neighbors Maximum number of neighbors to consider per node (default: 3)
 #' @param max_adjacency_streak Maximum number of consecutive adjacency edges (default: 3)
+#' @param genome Reference genome for calculating genomic distances (default: "hg19")
+#' @param verbose Print progress messages (default: TRUE)
 #' @return A list containing detected chromoplexy chains and summary statistics
 #' @export
 detect_chromoplexy <- function(SV.sample,
@@ -89,7 +91,8 @@ detect_chromoplexy <- function(SV.sample,
                                max_search_depth = 10,
                                max_neighbors = 3,
                                max_adjacency_streak = 3, # New parameter
-                               genome = "hg19") {
+                               genome = "hg19",
+                               verbose = TRUE) {
     # Convert to data frame if needed
     if (is(SV.sample, "SVs")) {
         SV.sample <- as(SV.sample, "data.frame")
@@ -97,6 +100,11 @@ detect_chromoplexy <- function(SV.sample,
 
     if (!is.null(CNV.sample) && is(CNV.sample, "CNVsegs")) {
         CNV.sample <- as(CNV.sample, "data.frame")
+    }
+    cnv_available <- !is.null(CNV.sample) && !is.null(nrow(CNV.sample)) && nrow(CNV.sample) > 0
+    sv_only <- !cnv_available
+    if (!cnv_available) {
+        CNV.sample <- NULL
     }
 
     # Extract inter-chromosomal SVs (translocations)
@@ -114,28 +122,38 @@ detect_chromoplexy <- function(SV.sample,
             "Only %d inter-chromosomal SVs found. Need at least %d for chromoplexy detection.",
             nrow(inter_chr_SVs), min_translocations
         ))
-        return(create_empty_chromoplexy_result_v3())
+        return(create_empty_chromoplexy_result_v3(
+            analysis_mode = if (sv_only) "SV-only chromoplexy" else "SV+CNV chromoplexy",
+            limitations = if (sv_only) c(
+                "CNV not provided: CN stability and deletion bridge support were not evaluated."
+            ) else character(0)
+        ))
     }
 
-    cat("========================================================================\n")
-    cat("Chromoplexy Detection v3.0 - CORRECTED GRAPH CONSTRUCTION\n")
-    cat("========================================================================\n\n")
+    if (verbose) {
+        cat("========================================================================\n")
+        cat("Chromoplexy Detection v3.0 - CORRECTED GRAPH CONSTRUCTION\n")
+        if (sv_only) {
+            cat("Mode: SV-only (CN stability and deletion bridges disabled)\n")
+        }
+        cat("========================================================================\n\n")
+    }
 
     # STEP 1: Identify deletion bridges (before graph construction)
     deletion_bridges <- NULL
     if (!is.null(CNV.sample)) {
-        cat("Step 1: Identifying deletion bridges...\n")
+        if (verbose) cat("Step 1: Identifying deletion bridges...\n")
         deletion_bridges <- identify_deletion_bridges_v3(
             SV.sample = inter_chr_SVs,
             CNV.sample = CNV.sample,
             max_distance = deletion_bridge_distance
         )
-        cat(sprintf("  -> Found %d deletion bridges\n\n", length(deletion_bridges)))
+        if (verbose) cat(sprintf("  -> Found %d deletion bridges\n\n", length(deletion_bridges)))
     }
 
     # STEP 2: Build COMPLETE translocation graph
     # This is the critical fix - graph now includes THREE types of edges
-    cat("Step 2: Building complete translocation graph...\n")
+    if (verbose) cat("Step 2: Building complete translocation graph...\n")
     tlx_graph <- build_complete_translocation_graph_v3(
         inter_chr_SVs = inter_chr_SVs,
         deletion_bridges = deletion_bridges,
@@ -144,27 +162,29 @@ detect_chromoplexy <- function(SV.sample,
         max_neighbors = max_neighbors # Pass new parameter
     )
 
-    cat(sprintf(
-        "  -> Graph has %d nodes and %d edges\n",
-        length(tlx_graph$nodes), nrow(tlx_graph$edges)
-    ))
-    cat(sprintf(
-        "     - Translocation edges: %d\n",
-        sum(tlx_graph$edges$edge_type == "TRANSLOCATION")
-    ))
-    if (!is.null(deletion_bridges) && length(deletion_bridges) > 0) {
+    if (verbose) {
         cat(sprintf(
-            "     - Deletion bridge edges: %d\n",
-            sum(tlx_graph$edges$edge_type == "DELETION_BRIDGE")
+            "  -> Graph has %d nodes and %d edges\n",
+            length(tlx_graph$nodes), nrow(tlx_graph$edges)
+        ))
+        cat(sprintf(
+            "     - Translocation edges: %d\n",
+            sum(tlx_graph$edges$edge_type == "TRANSLOCATION")
+        ))
+        if (!is.null(deletion_bridges) && length(deletion_bridges) > 0) {
+            cat(sprintf(
+                "     - Deletion bridge edges: %d\n",
+                sum(tlx_graph$edges$edge_type == "DELETION_BRIDGE")
+            ))
+        }
+        cat(sprintf(
+            "     - Genomic adjacency edges: %d\n\n",
+            sum(tlx_graph$edges$edge_type == "ADJACENCY")
         ))
     }
-    cat(sprintf(
-        "     - Genomic adjacency edges: %d\n\n",
-        sum(tlx_graph$edges$edge_type == "ADJACENCY")
-    ))
 
     # STEP 3: Detect all possible chains using backtracking
-    cat("Step 3: Detecting translocation chains (backtracking)...")
+    if (verbose) cat("Step 3: Detecting translocation chains (backtracking)...")
     all_chains <- detect_all_chains_v3(
         tlx_graph = tlx_graph,
         inter_chr_SVs = inter_chr_SVs,
@@ -177,14 +197,19 @@ detect_chromoplexy <- function(SV.sample,
     )
 
     if (length(all_chains) == 0) {
-        cat("  -> No chromoplexy chains detected.\n\n")
-        return(create_empty_chromoplexy_result_v3())
+        if (verbose) cat("  -> No chromoplexy chains detected.\n\n")
+        return(create_empty_chromoplexy_result_v3(
+            analysis_mode = if (sv_only) "SV-only chromoplexy" else "SV+CNV chromoplexy",
+            limitations = if (sv_only) c(
+                "CNV not provided: CN stability and deletion bridge support were not evaluated."
+            ) else character(0)
+        ))
     }
 
-    cat(sprintf("  -> Found %d potential chromoplexy chain(s)\n\n", length(all_chains)))
+    if (verbose) cat(sprintf("  -> Found %d potential chromoplexy chain(s)\n\n", length(all_chains)))
 
     # STEP 4: Evaluate each chain
-    cat("Step 4: Evaluating chains...\n")
+    if (verbose) cat("Step 4: Evaluating chains...\n")
     genome_size <- get_genome_size(genome)
 
     chain_results <- list()
@@ -210,8 +235,10 @@ detect_chromoplexy <- function(SV.sample,
         use_statistical_testing = use_statistical_testing,
         fdr_threshold = fdr_threshold,
         likely_threshold = likely_chromoplexy_threshold,
-        possible_threshold = possible_chromoplexy_threshold
+        possible_threshold = possible_chromoplexy_threshold,
+        sv_only = sv_only
     )
+    summary_df$evidence_mode <- if (sv_only) "SV-only" else "SV+CNV"
 
     # Sort chains by combined evidence score
     if ("combined_score" %in% colnames(summary_df)) {
@@ -226,12 +253,13 @@ detect_chromoplexy <- function(SV.sample,
         chain_results[[i]]$summary$classification <- summary_df$classification[i]
     }
 
-    cat(sprintf("  -> Likely chromoplexy: %d\n", sum(summary_df$classification == "Likely chromoplexy")))
-    cat(sprintf("  -> Possible chromoplexy: %d\n\n", sum(summary_df$classification == "Possible chromoplexy")))
-
-    cat("========================================================================\n")
-    cat("Detection complete!\n")
-    cat("========================================================================\n\n")
+    if (verbose) {
+        cat(sprintf("  -> Likely chromoplexy: %d\n", sum(summary_df$classification == "Likely chromoplexy")))
+        cat(sprintf("  -> Possible chromoplexy: %d\n\n", sum(summary_df$classification == "Possible chromoplexy")))
+        cat("========================================================================\n")
+        cat("Detection complete!\n")
+        cat("========================================================================\n\n")
+    }
 
     result <- list(
         chains = all_chains,
@@ -242,6 +270,10 @@ detect_chromoplexy <- function(SV.sample,
         total_chains = length(all_chains),
         likely_chromoplexy = sum(summary_df$classification == "Likely chromoplexy"),
         possible_chromoplexy = sum(summary_df$classification == "Possible chromoplexy"),
+        analysis_mode = if (sv_only) "SV-only chromoplexy" else "SV+CNV chromoplexy",
+        limitations = if (sv_only) c(
+            "CNV not provided: CN stability and deletion bridge support were not evaluated."
+        ) else character(0),
         parameters = list(
             min_chromosomes = min_chromosomes,
             min_translocations = min_translocations,
@@ -251,7 +283,8 @@ detect_chromoplexy <- function(SV.sample,
             fdr_threshold = fdr_threshold,
             use_statistical_testing = use_statistical_testing,
             likely_chromoplexy_threshold = likely_chromoplexy_threshold, # Added
-            possible_chromoplexy_threshold = possible_chromoplexy_threshold # Added
+            possible_chromoplexy_threshold = possible_chromoplexy_threshold, # Added
+            sv_only = sv_only
         ),
         version = "3.0"
     )
@@ -1093,6 +1126,15 @@ evaluate_edge_composition_v3 <- function(chain) {
 #' @keywords internal
 evaluate_cn_stability_enhanced_v3 <- function(chain, chain_SVs, CNV.sample) {
     # Similar to v2, but simplified for now
+    if (is.null(CNV.sample) || is.null(nrow(CNV.sample)) || nrow(CNV.sample) == 0) {
+        return(list(
+            combined_score = NA_real_,
+            max_deviation = NA_real_,
+            mean_deviation = NA_real_,
+            evaluated = FALSE
+        ))
+    }
+
     cn_deviations <- c()
 
     for (chr in chain$chromosomes) {
@@ -1111,7 +1153,8 @@ evaluate_cn_stability_enhanced_v3 <- function(chain, chain_SVs, CNV.sample) {
     return(list(
         combined_score = combined_score,
         max_deviation = max_deviation,
-        mean_deviation = mean_deviation
+        mean_deviation = mean_deviation,
+        evaluated = TRUE
     ))
 }
 
@@ -1157,6 +1200,13 @@ calculate_combined_evidence_score_v3 <- function(cn_stability_score,
         }
     }
 
+    valid <- !is.na(scores) & !is.na(weights)
+    scores <- scores[valid]
+    weights <- weights[valid]
+    if (length(scores) == 0 || sum(weights) == 0) {
+        return(NA_real_)
+    }
+
     # Weighted average
     combined <- sum(scores * weights) / sum(weights)
 
@@ -1166,15 +1216,19 @@ calculate_combined_evidence_score_v3 <- function(cn_stability_score,
 
 #' Classify chromoplexy event (v3)
 #'
+#' @param summary_df Chain-level summary data frame
+#' @param use_statistical_testing Whether to use statistical significance in classification
 #' @param fdr_threshold FDR threshold for statistical significance (default: 0.01)
 #' @param likely_threshold Minimum criteria met for "Likely chromoplexy" (default: 5)
 #' @param possible_threshold Minimum criteria met for "Possible chromoplexy" (default: 4)
+#' @param sv_only Whether CNV evidence is unavailable and classification should use SV-only criteria
 #' @keywords internal
 classify_chromoplexy_event_v3 <- function(summary_df,
                                           use_statistical_testing = TRUE,
                                           fdr_threshold = 0.01,
                                           likely_threshold = 5, # New parameter
-                                          possible_threshold = 4) { # New parameter
+                                          possible_threshold = 4, # New parameter
+                                          sv_only = FALSE) {
 
     classifications <- character(nrow(summary_df))
 
@@ -1184,7 +1238,7 @@ classify_chromoplexy_event_v3 <- function(summary_df,
         # Core criteria
         meets_chr_criteria <- row$n_chromosomes >= 3
         meets_tlx_criteria <- row$n_translocations >= 3
-        meets_cn_criteria <- row$cn_stability_score >= 0.7
+        meets_cn_criteria <- !is.na(row$cn_stability_score) && row$cn_stability_score >= 0.7
         meets_complexity <- row$complexity_score >= 0.3
 
         # Enhanced criteria
@@ -1206,7 +1260,18 @@ classify_chromoplexy_event_v3 <- function(summary_df,
         criteria_met <- sum(all_criteria)
 
         # Classification
-        if (use_statistical_testing) {
+        if (sv_only) {
+            core_criteria_met <- sum(c(meets_chr_criteria, meets_tlx_criteria, meets_complexity))
+            if (core_criteria_met == 3 && (!use_statistical_testing || meets_statistical)) {
+                classifications[i] <- "Likely chromoplexy"
+            } else if (core_criteria_met == 3) {
+                classifications[i] <- "Possible chromoplexy"
+            } else if (core_criteria_met >= 2) {
+                classifications[i] <- "Unlikely chromoplexy"
+            } else {
+                classifications[i] <- "Not chromoplexy"
+            }
+        } else if (use_statistical_testing) {
             if (meets_statistical && criteria_met >= likely_threshold) {
                 classifications[i] <- "Likely chromoplexy"
             } else if (criteria_met >= possible_threshold) {
@@ -1240,8 +1305,12 @@ classify_chromoplexy_event_v3 <- function(summary_df,
 
 #' Create empty result (v3)
 #'
+#' @param analysis_mode Short description of the analysis mode
+#' @param limitations Character vector describing limitations for this result
+#' @return Empty chromoplexy result object
 #' @keywords internal
-create_empty_chromoplexy_result_v3 <- function() {
+create_empty_chromoplexy_result_v3 <- function(analysis_mode = "SV+CNV chromoplexy",
+                                               limitations = character(0)) {
     result <- list(
         chains = list(),
         chain_details = list(),
@@ -1251,6 +1320,8 @@ create_empty_chromoplexy_result_v3 <- function() {
         total_chains = 0,
         likely_chromoplexy = 0,
         possible_chromoplexy = 0,
+        analysis_mode = analysis_mode,
+        limitations = limitations,
         version = "3.0"
     )
 

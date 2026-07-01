@@ -6,7 +6,7 @@
 \usage{
 detect_chromoanagenesis(
   SV.sample,
-  CNV.sample,
+  CNV.sample = NULL,
   genome = "hg19",
   detect_chromothripsis = TRUE,
   detect_chromoplexy = TRUE,
@@ -24,7 +24,8 @@ detect_chromoanagenesis(
 \arguments{
 \item{SV.sample}{An instance of class SVs or data frame with SV data}
 
-\item{CNV.sample}{An instance of class CNVsegs or data frame with CNV data}
+\item{CNV.sample}{Optional instance of class CNVsegs or data frame with CNV data.
+If NULL, only SV-only chromoplexy detection is run.}
 
 \item{genome}{Reference genome ("hg19" or "hg38", default: "hg19")}
 

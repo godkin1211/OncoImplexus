@@ -77,7 +77,50 @@ read_sv_vcf <- function(vcf_file,
         
         # Use the logic from read_sv_vcf_structuralvariant (implemented in structural_variant_annotation_support.R)
         # We assume this function is available in the package namespace
-        svs <- read_sv_vcf_structuralvariant(vcf_file, genome = genome, include_breakends = TRUE, caller = caller)
+        sva_error <- NULL
+        svs <- tryCatch(
+            read_sv_vcf_structuralvariant(vcf_file, genome = genome, include_breakends = TRUE, caller = caller),
+            error = function(e) {
+                sva_error <<- e
+                NULL
+            }
+        )
+
+        # Sniffles2/ONT VCFs can contain single BND records whose mate is encoded
+        # only in ALT bracket notation. StructuralVariantAnnotation drops these
+        # as unpaired breakends, but they are still useful translocation edges
+        # for SV-only chromoplexy detection.
+        bnd_svs <- if (include_tra) .read_unpaired_bnd_from_vcf(vcf_file) else NULL
+        if (is.null(svs)) {
+            if (!is.null(bnd_svs) && length(bnd_svs@chrom1) > 0) {
+                svs <- bnd_svs
+                message(sprintf(
+                    "Using %d unpaired BND records parsed from ALT notation",
+                    length(svs@chrom1)
+                ))
+            } else {
+                stop("Failed to parse SV VCF with StructuralVariantAnnotation: ",
+                     conditionMessage(sva_error))
+            }
+        } else if (!is.null(bnd_svs) && length(bnd_svs@chrom1) > 0) {
+            new_bnd <- !bnd_svs@sv_id %in% svs@sv_id
+            if (any(new_bnd)) {
+                svs <- SVs(
+                    chrom1 = c(svs@chrom1, bnd_svs@chrom1[new_bnd]),
+                    pos1 = c(svs@pos1, bnd_svs@pos1[new_bnd]),
+                    chrom2 = c(svs@chrom2, bnd_svs@chrom2[new_bnd]),
+                    pos2 = c(svs@pos2, bnd_svs@pos2[new_bnd]),
+                    SVtype = c(svs@SVtype, bnd_svs@SVtype[new_bnd]),
+                    strand1 = c(svs@strand1, bnd_svs@strand1[new_bnd]),
+                    strand2 = c(svs@strand2, bnd_svs@strand2[new_bnd]),
+                    sv_id = c(svs@sv_id, bnd_svs@sv_id[new_bnd])
+                )
+                message(sprintf(
+                    "Added %d unpaired BND records parsed from ALT notation",
+                    sum(new_bnd)
+                ))
+            }
+        }
         
         # Apply filters (min_sv_size and include_tra) which are not native to read_sv_vcf_structuralvariant
         
@@ -143,6 +186,99 @@ read_sv_vcf <- function(vcf_file,
         
         return(svs)
     }
+}
+
+
+#' Internal function: parse single-record BND variants from VCF ALT notation
+#' @keywords internal
+.read_unpaired_bnd_from_vcf <- function(vcf_file) {
+    normalize_chrom <- function(x) {
+        x <- gsub("^chr", "", x, ignore.case = TRUE)
+        toupper(x)
+    }
+
+    infer_bnd_strands <- function(alt) {
+        first_char <- substr(alt, 1, 1)
+        local_strand <- ifelse(first_char %in% c("[", "]"), "-", "+")
+        remote_strand <- ifelse(grepl("[", alt, fixed = TRUE), "+", "-")
+        c(local_strand, remote_strand)
+    }
+
+    con <- if (grepl("\\.gz$", vcf_file, ignore.case = TRUE)) {
+        gzfile(vcf_file, "rt")
+    } else {
+        file(vcf_file, "rt")
+    }
+    on.exit(close(con))
+
+    chrom1 <- character()
+    pos1 <- integer()
+    chrom2 <- character()
+    pos2 <- integer()
+    strand1 <- character()
+    strand2 <- character()
+    sv_id <- character()
+
+    target_pattern <- "([\\[\\]])([^:\\[\\]]+):([0-9]+)([\\[\\]])"
+
+    repeat {
+        lines <- readLines(con, n = 5000, warn = FALSE)
+        if (length(lines) == 0) break
+
+        records <- lines[!startsWith(lines, "#")]
+        if (length(records) == 0) next
+
+        fields <- strsplit(records, "\t", fixed = TRUE)
+        info <- vapply(fields, function(x) if (length(x) >= 8) x[8] else NA_character_, character(1))
+        is_bnd <- !is.na(info) & grepl("SVTYPE=BND", info, fixed = TRUE)
+        if (!any(is_bnd)) next
+
+        for (rec in fields[is_bnd]) {
+            if (length(rec) < 8) next
+
+            alt <- rec[5]
+            match <- regexec(target_pattern, alt, perl = TRUE)
+            parsed <- regmatches(alt, match)[[1]]
+            if (length(parsed) < 5) next
+
+            src_chrom <- normalize_chrom(rec[1])
+            mate_chrom <- normalize_chrom(parsed[3])
+            src_pos <- suppressWarnings(as.integer(rec[2]))
+            mate_pos <- suppressWarnings(as.integer(parsed[4]))
+            if (is.na(src_pos) || is.na(mate_pos)) next
+
+            strands <- infer_bnd_strands(alt)
+
+            chrom1 <- c(chrom1, src_chrom)
+            pos1 <- c(pos1, src_pos)
+            chrom2 <- c(chrom2, mate_chrom)
+            pos2 <- c(pos2, mate_pos)
+            strand1 <- c(strand1, strands[1])
+            strand2 <- c(strand2, strands[2])
+            sv_id <- c(sv_id, rec[3])
+        }
+    }
+
+    if (length(chrom1) == 0) {
+        return(NULL)
+    }
+
+    valid_chroms <- c(as.character(1:22), "X")
+    keep <- chrom1 %in% valid_chroms & chrom2 %in% valid_chroms
+    if (!any(keep)) {
+        return(NULL)
+    }
+
+    SVs(
+        chrom1 = chrom1[keep],
+        pos1 = pos1[keep],
+        chrom2 = chrom2[keep],
+        pos2 = pos2[keep],
+        SVtype = rep("TRA", sum(keep)),
+        strand1 = strand1[keep],
+        strand2 = strand2[keep],
+        sv_id = sv_id[keep]
+    )
 }
 
 

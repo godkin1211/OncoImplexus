@@ -77,8 +77,8 @@ COPY inst/shiny/app.R /srv/shiny-server/
 
 # Copy Gene Annotation RDS files explicitly to the app directory
 # This ensures the app can find them in its working directory
-COPY hg19_genes.rds /srv/shiny-server/
-COPY hg38_genes.rds /srv/shiny-server/
+COPY inst/extdata/hg19_genes.rds /srv/shiny-server/
+COPY inst/extdata/hg38_genes.rds /srv/shiny-server/
 
 # 8. Exposure and Command
 EXPOSE 3838

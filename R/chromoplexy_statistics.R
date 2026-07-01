@@ -19,7 +19,7 @@ calculate_chain_significance <- function(chain,
                                             genome_size,
                                             fdr_threshold = 0.01) {
 
-    # Calculate local rearrangement rate (μ)
+    # Calculate local rearrangement rate (mu)
     mu <- estimate_local_rearrangement_rate( # Updated call
         chromosomes = chain$chromosomes,
         total_SVs = nrow(inter_chr_SVs),
@@ -99,7 +99,7 @@ calculate_chain_significance <- function(chain,
 #' @param chromosomes Chromosomes in chain
 #' @param total_SVs Total number of SVs in sample
 #' @param genome_size Genome size
-#' @return Local rearrangement rate (μ)
+#' @return Local rearrangement rate (mu)
 #' @keywords internal
 estimate_local_rearrangement_rate <- function(chromosomes,
                                                  total_SVs,
@@ -164,8 +164,8 @@ calculate_genomic_distance <- function(node1, node2, genome_size) {
 calculate_adjacency_pvalue <- function(distance, mu, genome_size) {
 
     # Model: Poisson process for breakpoint occurrence
-    # P(at least one breakpoint in window) = 1 - exp(-λ)
-    # where λ = mu * window_size (in Mb)
+    # P(at least one breakpoint in window) = 1 - exp(-lambda)
+    # where lambda = mu * window_size (in Mb)
 
     window_size_mb <- distance / 1e6
     lambda <- mu * window_size_mb

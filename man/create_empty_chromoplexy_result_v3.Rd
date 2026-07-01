@@ -4,7 +4,18 @@
 \alias{create_empty_chromoplexy_result_v3}
 \title{Create empty result (v3)}
 \usage{
-create_empty_chromoplexy_result_v3()
+create_empty_chromoplexy_result_v3(
+  analysis_mode = "SV+CNV chromoplexy",
+  limitations = character(0)
+)
+}
+\arguments{
+\item{analysis_mode}{Short description of the analysis mode}
+
+\item{limitations}{Character vector describing limitations for this result}
+}
+\value{
+Empty chromoplexy result object
 }
 \description{
 Create empty result (v3)

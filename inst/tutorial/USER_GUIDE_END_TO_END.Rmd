@@ -133,10 +133,33 @@ Run all three mechanisms (Chromothripsis, Chromoplexy, Chromoanasynthesis) in on
 
 ```{r eval=FALSE}
 results <- detect_chromoanagenesis(
-  sv_data,
-  cnv_data,
+  SV.sample = sv_data,
+  CNV.sample = cnv_data,
   genome = "hg38"  # or "hg19"
 )
+```
+
+## SV-only Chromoplexy Mode
+
+If only an SV VCF is available, omit `CNV.sample`. OncoImplexus will run
+chromoplexy detection only and mark the result as SV-only evidence. Chromothripsis
+and chromoanasynthesis are skipped because their core evidence requires copy
+number profiles.
+
+```{r eval=FALSE}
+sv_data <- read_sv_vcf("tumor.sv.vcf.gz", genome = "hg38")
+
+results <- detect_chromoanagenesis(
+  SV.sample = sv_data,
+  CNV.sample = NULL,
+  genome = "hg38",
+  detect_chromoplexy = TRUE,
+  gene_granges = gene_granges
+)
+
+results$analysis_mode
+results$limitations
+results$chromoplexy$summary
 ```
 
 ## Step 4: Generating the Interactive HTML Report

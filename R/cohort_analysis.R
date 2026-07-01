@@ -247,7 +247,7 @@ compare_mechanisms <- function(cohort, group_by, stringency = "strict") {
 #' Supports parallel processing for faster execution.
 #'
 #' @param sample_sheet Path to a CSV/TSV file or a data frame containing sample information.
-#'   Must contain columns: 'sv_file' and 'cnv_file'. 
+#'   Must contain column: 'sv_file'. Optional column: 'cnv_file' for full SV+CNV analysis.
 #'   Optional columns: 'sample_id' (if missing, row numbers or filenames are used).
 #' @param output_dir Optional directory to save individual result objects (.rds files).
 #'   Useful for caching results of large cohorts.
@@ -294,10 +294,13 @@ process_cohort_files <- function(sample_sheet,
     }
     
     # 2. Validate columns
-    required_cols <- c("sv_file", "cnv_file")
+    required_cols <- c("sv_file")
     missing_cols <- setdiff(required_cols, colnames(df))
     if (length(missing_cols) > 0) {
         stop(sprintf("Sample sheet missing required columns: %s", paste(missing_cols, collapse = ", ")))
+    }
+    if (!"cnv_file" %in% colnames(df)) {
+        df$cnv_file <- NA_character_
     }
     
     # Handle sample IDs
@@ -341,9 +344,9 @@ process_cohort_files <- function(sample_sheet,
             warning(sprintf("SV file not found for sample %s: %s", sid, sv_path))
             return(NULL)
         }
-        if (!file.exists(cnv_path)) {
-            warning(sprintf("CNV file not found for sample %s: %s", sid, cnv_path))
-            return(NULL)
+        has_cnv <- !is.na(cnv_path) && nzchar(cnv_path) && file.exists(cnv_path)
+        if (!has_cnv) {
+            message(sprintf("  CNV file not available for %s. Running SV-only chromoplexy analysis.", sid))
         }
         
         tryCatch({
@@ -354,11 +357,16 @@ process_cohort_files <- function(sample_sheet,
             
             # Using min_sv_size=0 by default for robustness as per our testing
             sv_data <- read_sv_vcf(sv_path, min_sv_size = 0)
-            cnv_data <- read_cnv_vcf(cnv_path)
+            cnv_data <- if (has_cnv) read_cnv_vcf(cnv_path) else NULL
             
             # Run Detection
             # Pass ellipses (...) arguments to detect_chromoanagenesis
-            res <- detect_chromoanagenesis(sv_data, cnv_data, verbose = FALSE, ...)
+            res <- detect_chromoanagenesis(
+                SV.sample = sv_data,
+                CNV.sample = cnv_data,
+                verbose = FALSE,
+                ...
+            )
             
             # Save Cache
             if (!is.null(output_dir)) {

@@ -7,7 +7,7 @@
 generate_interactive_report(
   result,
   SV.sample,
-  CNV.sample,
+  CNV.sample = NULL,
   output_file = "report.html",
   output_dir = "reports/sample_reports",
   sample_name = "Sample",
@@ -21,7 +21,7 @@ generate_interactive_report(
 
 \item{SV.sample}{The original SV data used for analysis}
 
-\item{CNV.sample}{The original CNV data used for analysis}
+\item{CNV.sample}{Optional original CNV data used for analysis}
 
 \item{output_file}{Output HTML filename}
 

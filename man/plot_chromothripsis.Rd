@@ -4,7 +4,7 @@
 \alias{plot_chromothripsis}
 \title{Plot chromothripsis regions
 This function serves to plot chromothripsis regions
-in order to facilitate the revision of 
+in order to facilitate the revision of
 candidate chromothripsis regions}
 \usage{
 plot_chromothripsis(
@@ -47,6 +47,6 @@ a list containing ggplot objects (chromosome ideogram, SVs, CN profile, and tabl
 \description{
 Plot chromothripsis regions
 This function serves to plot chromothripsis regions
-in order to facilitate the revision of 
+in order to facilitate the revision of
 candidate chromothripsis regions
 }

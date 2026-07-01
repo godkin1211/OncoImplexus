@@ -4,12 +4,12 @@
 \alias{assess_data_quality}
 \title{Assess input data quality for Chromoanagenesis analysis}
 \usage{
-assess_data_quality(SV.sample, CNV.sample, genome = "hg19")
+assess_data_quality(SV.sample, CNV.sample = NULL, genome = "hg19")
 }
 \arguments{
 \item{SV.sample}{Structural variant data (SVs object or data.frame)}
 
-\item{CNV.sample}{Copy number data (CNVsegs object or data.frame)}
+\item{CNV.sample}{Optional copy number data (CNVsegs object or data.frame)}
 
 \item{genome}{Reference genome ("hg19" or "hg38")}
 }

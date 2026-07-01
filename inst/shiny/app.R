@@ -19,7 +19,7 @@ ui <- dashboardPage(
         ),
         hr(),
         fileInput("sv_file", "Upload SV VCF (.vcf, .vcf.gz)", accept = c(".vcf", ".gz")),
-        fileInput("cnv_file", "Upload CNV VCF (.vcf, .vcf.gz)", accept = c(".vcf", ".gz")),
+        fileInput("cnv_file", "Upload CNV VCF (.vcf, .vcf.gz, optional)", accept = c(".vcf", ".gz")),
         selectInput("genome", "Genome Build", choices = c("hg38", "hg19")),
         actionButton("run", "Run Analysis", icon = icon("play"), class = "btn-success"),
         hr(),
@@ -107,7 +107,7 @@ server <- function(input, output, session) {
     output$status_text <- renderText("Ready to analyze.")
 
     observeEvent(input$run, {
-        req(input$sv_file, input$cnv_file)
+        req(input$sv_file)
 
         # Reset
         values$results <- NULL
@@ -131,20 +131,27 @@ server <- function(input, output, session) {
 
                     # Load Gene Annotation
                     # Assumes gene files are in the same directory or a known location in the container
-                    gene_file <- paste0(genome_build, "_genes.rds")
-                    if (file.exists(gene_file)) {
+                    gene_name <- paste0(genome_build, "_genes.rds")
+                    gene_file <- system.file("extdata", gene_name, package = "OncoImplexus")
+                    if (gene_file != "" && file.exists(gene_file)) {
                         gene_data <- readRDS(gene_file)
-                    } else if (file.exists(file.path("data", gene_file))) {
-                        gene_data <- readRDS(file.path("data", gene_file))
+                    } else if (file.exists(gene_name)) {
+                        gene_data <- readRDS(gene_name)
+                    } else if (file.exists(file.path("data", gene_name))) {
+                        gene_data <- readRDS(file.path("data", gene_name))
                     } else {
                         # Fallback for dev environment or if missing
                         # Ideally this should error out or use a minimal set
-                        showNotification(paste("Gene annotation file not found:", gene_file), type = "warning")
-                        gene_data <- GRanges()
+                        showNotification(paste("Gene annotation file not found:", gene_name), type = "warning")
+                        gene_data <- GenomicRanges::GRanges()
                     }
 
                     values$sv_data <- read_sv_vcf(input$sv_file$datapath, genome = input$genome)
-                    values$cnv_data <- read_cnv_vcf(input$cnv_file$datapath)
+                    values$cnv_data <- if (!is.null(input$cnv_file)) {
+                        read_cnv_vcf(input$cnv_file$datapath)
+                    } else {
+                        NULL
+                    }
 
                     # 2. Detection
                     output$status_text <- renderText("Step 2/5: Detecting Chromoanagenesis...")

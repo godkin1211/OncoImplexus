@@ -8,7 +8,7 @@ process_cohort_files(sample_sheet, output_dir = NULL, num_cores = 1, ...)
 }
 \arguments{
 \item{sample_sheet}{Path to a CSV/TSV file or a data frame containing sample information.
-Must contain columns: 'sv_file' and 'cnv_file'. 
+Must contain column: 'sv_file'. Optional column: 'cnv_file' for full SV+CNV analysis.
 Optional columns: 'sample_id' (if missing, row numbers or filenames are used).}
 
 \item{output_dir}{Optional directory to save individual result objects (.rds files).

@@ -32,7 +32,7 @@ BugReports: https://github.com/godkin1211/OncoImplexus/issues
 Repository: GitHub
 LazyData: no
 Encoding: UTF-8
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
 Collate:
     'ancillary_functions.R'
     'breakpoint_sequence_analysis.R'
@@ -54,6 +54,7 @@ Collate:
     'cohort_analysis.R'
     'cohort_reporting.R'
     'cohort_visualization.R'
+    'data.R'
     'debug_classifier.R'
     'debug_mixed_mechanisms.R'
     'diagnostic_tools.R'
