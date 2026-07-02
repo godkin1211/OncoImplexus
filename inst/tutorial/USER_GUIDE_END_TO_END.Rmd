@@ -442,6 +442,34 @@ enrich <- run_chromoplexy_enrichment(
 summarize_chromoplexy_pathways(enrich, top_n = 10)
 ```
 
+Survival analysis can be run by merging the cohort result objects with clinical
+metadata. At minimum, provide `sample_id`, a survival time column, and an event
+column where 1 means the event occurred and 0 means censored.
+
+```{r eval=FALSE}
+clinical <- read.csv("clinical_metadata.csv")
+
+features <- build_chromoanagenesis_survival_features(
+  results = "cohort_results",
+  clinical_data = clinical
+)
+
+surv <- run_chromoanagenesis_survival(
+  features = features,
+  time_col = "OS_time",
+  event_col = "OS_event",
+  covariates = c("age", "stage"),
+  min_group_n = 5,
+  output_dir = "cohort_survival"
+)
+
+generate_survival_report(
+  surv,
+  output_file = "cohort_survival_report.html",
+  output_dir = "cohort_survival"
+)
+```
+
 **Master Summary Table Columns:**
 
 | Column | Description |

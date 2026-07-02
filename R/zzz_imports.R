@@ -11,3 +11,10 @@
 #' @importFrom IRanges IRanges
 #' @importFrom S4Vectors Rle
 NULL
+
+if (getRversion() >= "2.15.1") {
+    utils::globalVariables(c(
+        "conf_high", "conf_low", "feature_label", "group",
+        "hazard_ratio", "survival", "time"
+    ))
+}

@@ -200,7 +200,64 @@ plot_collapsed_chromoplexy_event(
 )
 ```
 
+Run cohort survival analysis by merging OncoImplexus-derived event burden,
+complexity, and driver-impact features with clinical metadata:
+
+```r
+clinical <- read.csv("clinical_metadata.csv")
+
+features <- build_chromoanagenesis_survival_features(
+  results = "cohort_results",
+  clinical_data = clinical
+)
+
+surv <- run_chromoanagenesis_survival(
+  features = features,
+  time_col = "OS_time",
+  event_col = "OS_event",
+  covariates = c("stage"),
+  min_group_n = 5
+)
+
+generate_survival_report(surv, output_dir = "survival_report")
+```
+
 For a more detailed walkthrough, please refer to the tutorial located at `inst/tutorial/USER_GUIDE_END_TO_END.Rmd`.
+
+### 5. One-Command Patient Report
+
+For a single patient/sample, use the command-line report script. It accepts any
+SV VCF filename and an optional CNV VCF. If the CNV VCF is omitted, the script
+runs SV-only chromoplexy analysis. The script requires `OncoImplexus >= 1.3.0`
+and will automatically prefer a repository-local `.r-lib` when present.
+
+```bash
+bash scripts/generate_patient_report.sh \
+  --sample-id Patient01 \
+  --sv-vcf input/Patient01.sv.vcf.gz \
+  --cnv-vcf input/Patient01.cnv.vcf.gz \
+  --genome hg38 \
+  --out-dir reports/Patient01 \
+  --enrichment
+```
+
+Minimal SV-only ONT/Sniffles2 example:
+
+```bash
+bash scripts/generate_patient_report.sh \
+  --sample-id ONT01 \
+  --sv-vcf bam_pass.wf_sv.vcf.gz \
+  --genome hg38 \
+  --out-dir reports/ONT01
+```
+
+Main outputs:
+
+- `Patient01_Report.html`: final HTML report
+- `Patient01_result.rds`: reusable R result object
+- `Patient01_collapsed_chromoplexy_events.tsv`: event-level chromoplexy calls
+- `Patient01_chromoplexy_gene_summary.tsv`: affected gene summary
+- `enrichment/`: optional GO BP / KEGG outputs when `--enrichment` is used
 
 ---
 
