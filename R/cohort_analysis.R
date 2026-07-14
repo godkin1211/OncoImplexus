@@ -592,6 +592,81 @@ summarize_chromoplexy_cohort_events <- function(results,
     out
 }
 
+#' Flag chromoplexy events that recur at near-identical breakpoints across
+#' unrelated cohort samples
+#'
+#' Chromoplexy is, by definition, a one-off catastrophic event private to a
+#' single tumor clone. If the *same* breakpoint (within \code{artifact_window}
+#' bp) is called in multiple, unrelated samples, that is evidence of a
+#' systematic artifact (e.g. mis-mapping in a segmental-duplication/repeat
+#' region, or a common structural polymorphism) rather than independent
+#' patient-specific rearrangements. Somatic cohorts usually filter this class
+#' of noise via matched-normal subtraction or a panel-of-normals; germline
+#' cohorts have no such step, so this check is especially important there.
+#'
+#' This reuses \code{summarize_chromoplexy_cohort_events()}'s breakpoint
+#' aggregation with a much tighter window than its cancer-hotspot default
+#' (1e6 bp), and, unlike that function's \code{recurrence_score} (which
+#' treats gene-level recurrence as supporting evidence, appropriate for
+#' recurrent cancer driver events), treats breakpoint-level cross-sample
+#' recurrence as a red flag: matching events are marked
+#' \code{artifact_suspected = TRUE} and their confidence is downgraded rather
+#' than boosted.
+#'
+#' @param results A named list of chromoanagenesis results, an
+#'   \code{OncoImplexusCohort} object, or a directory of result \code{.rds}
+#'   files.
+#' @param artifact_window Window size in bp for considering two breakpoints
+#'   from different samples "the same". Default 1000.
+#' @param min_samples Minimum number of unrelated samples sharing a
+#'   breakpoint region before events there are flagged. Default 2.
+#' @return A list with \code{event_summary} (per-sample collapsed chromoplexy
+#'   events, with \code{artifact_suspected}, \code{n_samples_sharing_breakpoint}
+#'   and a downgraded \code{event_confidence} for flagged rows) and
+#'   \code{artifact_regions} (the recurrent breakpoint regions driving the
+#'   flags, for manual review e.g. against a segmental-duplication track).
+#' @export
+flag_recurrent_chromoplexy_artifacts <- function(results, artifact_window = 1000, min_samples = 2) {
+    cohort <- summarize_chromoplexy_cohort_events(results, breakpoint_window = artifact_window)
+    events <- cohort$event_summary
+    regions <- cohort$breakpoint_region_summary
+
+    if (nrow(events) == 0) {
+        events$artifact_suspected <- logical(0)
+        events$n_samples_sharing_breakpoint <- integer(0)
+        return(list(event_summary = events, artifact_regions = regions))
+    }
+
+    events$artifact_suspected <- FALSE
+    events$n_samples_sharing_breakpoint <- 1L
+
+    if (nrow(regions) > 0) {
+        artifact_regions <- regions[regions$n_samples >= min_samples, , drop = FALSE]
+        if (nrow(artifact_regions) > 0) {
+            for (i in seq_len(nrow(artifact_regions))) {
+                flagged_ids <- unlist(strsplit(artifact_regions$cohort_event_ids[i], ",", fixed = TRUE))
+                match_idx <- events$cohort_event_id %in% flagged_ids
+                events$artifact_suspected[match_idx] <- TRUE
+                events$n_samples_sharing_breakpoint[match_idx] <- pmax(
+                    events$n_samples_sharing_breakpoint[match_idx],
+                    artifact_regions$n_samples[i]
+                )
+            }
+        }
+    } else {
+        artifact_regions <- regions
+    }
+
+    if ("event_confidence" %in% colnames(events)) {
+        events$event_confidence_original <- events$event_confidence
+        events$event_confidence[events$artifact_suspected] <- "Low (recurrent cross-sample artifact)"
+    }
+
+    events <- events[order(-events$artifact_suspected, events$sample_id), , drop = FALSE]
+
+    list(event_summary = events, artifact_regions = artifact_regions)
+}
+
 coerce_chromoplexy_results_list <- function(results) {
     if (inherits(results, "OncoImplexusCohort")) {
         out <- results@results
@@ -775,7 +850,10 @@ summarize_recurrent_breakpoint_regions <- function(breakpoint_detail) {
 bind_rows_or_empty <- function(rows) {
     rows <- Filter(function(x) !is.null(x) && nrow(x) > 0, rows)
     if (length(rows) == 0) return(data.frame())
-    do.call(rbind, rows)
+    # Per-sample tables can have different optional columns (e.g.
+    # n_gene_overlapping_breakpoints is only present when a sample has gene
+    # overlaps), so a plain rbind() would error; fill missing columns with NA.
+    as.data.frame(data.table::rbindlist(rows, fill = TRUE, use.names = TRUE))
 }
 
 write_summary_tsv <- function(x, file) {
