@@ -98,6 +98,10 @@ granges_to_svs <- function(gr,
     # Track processed breakpoints to avoid duplicates
     processed <- rep(FALSE, n_svs)
 
+    # Precompute partner_id -> index lookup once (vectorized match uses a hash
+    # table internally), instead of scanning names(gr) linearly per breakend.
+    partner_idx_lookup <- match(partner_ids, names(gr))
+
     # Process paired breakpoints
     for (i in seq_along(gr)) {
         if (processed[i]) next
@@ -110,7 +114,8 @@ granges_to_svs <- function(gr,
         }
 
         # Find partner index
-        partner_idx <- which(names(gr) == partner_id)
+        partner_idx <- partner_idx_lookup[i]
+        partner_idx <- if (is.na(partner_idx)) integer(0) else partner_idx
 
         if (length(partner_idx) == 0) {
             # Partner not in this GRanges - single breakend (TRA)
