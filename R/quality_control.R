@@ -101,3 +101,83 @@ assess_data_quality <- function(SV.sample, CNV.sample = NULL, genome = "hg19") {
 
     return(metrics)
 }
+
+#' Flag inter-chromosomal breakpoints that cluster unusually tightly within
+#' a single sample
+#'
+#' Chromoplexy chain-finding builds its translocation graph from
+#' inter-chromosomal (BND) breakpoints and assumes each one represents a
+#' distinct, real rearrangement junction. When several independent BND
+#' records land within a very small window (default 1000 bp) of each other,
+#' that is more consistent with alignment ambiguity in a
+#' repetitive/segmental-duplication region -- which produces multiple
+#' slightly different candidate breakpoint calls for what is likely the same
+#' underlying locus -- than with several independent translocation
+#' junctions. Unlike \code{\link{flag_recurrent_chromoplexy_artifacts}}
+#' (which needs multiple unrelated cohort samples to detect recurrence),
+#' this check works from a single sample and is used by
+#' \code{detect_chromoanagenesis(germline_mode = TRUE)} to pre-filter likely
+#' artifacts before chain-finding.
+#'
+#' Only inter-chromosomal SVs (\code{chrom1 != chrom2}) are considered.
+#' Intra-chromosomal clustering (small tandem DELs/DUPs/INVs sitting close
+#' together) is deliberately left untouched: it is exactly the kind of local
+#' signal chromothripsis and chromoanasynthesis detection legitimately rely
+#' on, and both already have their own statistical/structural gates.
+#'
+#' @param SV.sample An SVs object.
+#' @param window Window size in bp within which breakpoints on the same
+#'   chromosome are considered part of the same cluster. Default 1000.
+#' @param min_count Minimum number of distinct SV records in a cluster
+#'   before it is flagged. Default 2.
+#' @return A list with \code{flagged_sv_ids} (character vector of
+#'   \code{sv_id} values with at least one breakend in a flagged cluster)
+#'   and \code{clusters} (a data frame describing each flagged cluster:
+#'   chrom, start, end, n_sv, sv_ids).
+#' @export
+flag_locally_clustered_breakpoints <- function(SV.sample, window = 1000, min_count = 2) {
+    if (!is(SV.sample, "SVs")) stop("SV.sample must be an SVs object")
+
+    inter_chr <- SV.sample@chrom1 != SV.sample@chrom2
+    sides <- unique(rbind(
+        data.frame(chrom = SV.sample@chrom1[inter_chr], pos = SV.sample@pos1[inter_chr],
+                  sv_id = SV.sample@sv_id[inter_chr], stringsAsFactors = FALSE),
+        data.frame(chrom = SV.sample@chrom2[inter_chr], pos = SV.sample@pos2[inter_chr],
+                  sv_id = SV.sample@sv_id[inter_chr], stringsAsFactors = FALSE)
+    ))
+
+    cluster_rows <- list()
+    for (ch in unique(sides$chrom)) {
+        sub <- sides[sides$chrom == ch, , drop = FALSE]
+        if (nrow(sub) < min_count) next
+        sub <- sub[order(sub$pos), , drop = FALSE]
+        # Single-linkage clustering by position gap; O(n log n) via one sort,
+        # no per-breakpoint linear scans.
+        cluster_id <- cumsum(c(Inf, diff(sub$pos)) > window)
+
+        split_sub <- split(sub, cluster_id)
+        for (grp in split_sub) {
+            n_unique_sv <- length(unique(grp$sv_id))
+            if (n_unique_sv >= min_count) {
+                cluster_rows[[length(cluster_rows) + 1]] <- data.frame(
+                    chrom = ch,
+                    start = min(grp$pos),
+                    end = max(grp$pos),
+                    n_sv = n_unique_sv,
+                    sv_ids = paste(sort(unique(grp$sv_id)), collapse = ","),
+                    stringsAsFactors = FALSE
+                )
+            }
+        }
+    }
+
+    if (length(cluster_rows) == 0) {
+        return(list(flagged_sv_ids = character(0), clusters = data.frame()))
+    }
+
+    clusters <- do.call(rbind, cluster_rows)
+    clusters <- clusters[order(-clusters$n_sv, clusters$chrom, clusters$start), , drop = FALSE]
+    flagged_sv_ids <- unique(unlist(strsplit(clusters$sv_ids, ",", fixed = TRUE)))
+
+    list(flagged_sv_ids = flagged_sv_ids, clusters = clusters)
+}

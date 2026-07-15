@@ -21,6 +21,9 @@ detect_chromoanagenesis(
   collapse_chromoplexy_chains = TRUE,
   chromoplexy_collapse_classifications = c("Likely chromoplexy"),
   breakpoint_padding = 1000,
+  germline_mode = FALSE,
+  germline_artifact_window = 1000,
+  germline_artifact_min_count = 2,
   verbose = TRUE
 )
 }
@@ -60,6 +63,29 @@ in collapsed chromoplexy events (default: likely chromoplexy only)}
 
 \item{breakpoint_padding}{Padding in bp around chromoplexy breakpoints for
 gene impact annotation}
+
+\item{germline_mode}{Logical (default: FALSE). Tunes the analysis for
+germline WGS rather than somatic/tumor samples. Somatic cohorts
+typically filter systematic mapping artifacts via matched-normal
+subtraction or a panel-of-normals; a standalone germline sample has no
+such step, so chromoplexy chain-finding (which has no built-in local
+density or population-recurrence gate) is more exposed to
+repeat-region/segmental-duplication noise. When TRUE, breakpoints that
+locally cluster within \code{germline_artifact_window} bp (see
+\code{\link{flag_locally_clustered_breakpoints}}) are removed before any
+detection runs, and \code{min_chromoplexy_chromosomes}/\code{max_neighbors}
+default to stricter values unless explicitly overridden. The removed
+breakpoint report is returned in \code{result$germline_qc}. This does
+not replace cohort-level checks -- see
+\code{\link{flag_recurrent_chromoplexy_artifacts}} for flagging events
+that recur across unrelated samples once more than one is available.}
+
+\item{germline_artifact_window}{Window in bp for the germline local-cluster
+pre-filter (default: 1000). Only used when \code{germline_mode = TRUE}.}
+
+\item{germline_artifact_min_count}{Minimum number of distinct SVs in a
+local cluster before it is filtered out (default: 2). Only used when
+\code{germline_mode = TRUE}.}
 
 \item{verbose}{Logical, whether to print detailed progress messages}
 }

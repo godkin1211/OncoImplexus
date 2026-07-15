@@ -24,6 +24,26 @@
 #'   in collapsed chromoplexy events (default: likely chromoplexy only)
 #' @param breakpoint_padding Padding in bp around chromoplexy breakpoints for
 #'   gene impact annotation
+#' @param germline_mode Logical (default: FALSE). Tunes the analysis for
+#'   germline WGS rather than somatic/tumor samples. Somatic cohorts
+#'   typically filter systematic mapping artifacts via matched-normal
+#'   subtraction or a panel-of-normals; a standalone germline sample has no
+#'   such step, so chromoplexy chain-finding (which has no built-in local
+#'   density or population-recurrence gate) is more exposed to
+#'   repeat-region/segmental-duplication noise. When TRUE, breakpoints that
+#'   locally cluster within \code{germline_artifact_window} bp (see
+#'   \code{\link{flag_locally_clustered_breakpoints}}) are removed before any
+#'   detection runs, and \code{min_chromoplexy_chromosomes}/\code{max_neighbors}
+#'   default to stricter values unless explicitly overridden. The removed
+#'   breakpoint report is returned in \code{result$germline_qc}. This does
+#'   not replace cohort-level checks -- see
+#'   \code{\link{flag_recurrent_chromoplexy_artifacts}} for flagging events
+#'   that recur across unrelated samples once more than one is available.
+#' @param germline_artifact_window Window in bp for the germline local-cluster
+#'   pre-filter (default: 1000). Only used when \code{germline_mode = TRUE}.
+#' @param germline_artifact_min_count Minimum number of distinct SVs in a
+#'   local cluster before it is filtered out (default: 2). Only used when
+#'   \code{germline_mode = TRUE}.
 #' @param verbose Logical, whether to print detailed progress messages
 #' @return A chromoanagenesis object containing detection results for all mechanisms
 #' @details
@@ -89,6 +109,9 @@ detect_chromoanagenesis <- function(SV.sample,
                                    collapse_chromoplexy_chains = TRUE,
                                    chromoplexy_collapse_classifications = c("Likely chromoplexy"),
                                    breakpoint_padding = 1000,
+                                   germline_mode = FALSE,
+                                   germline_artifact_window = 1000,
+                                   germline_artifact_min_count = 2,
                                    verbose = TRUE) {
 
     if (verbose) {
@@ -96,6 +119,36 @@ detect_chromoanagenesis <- function(SV.sample,
         cat(rep("=", 70), "\n", sep = "")
         cat("     COMPREHENSIVE CHROMOANAGENESIS ANALYSIS\n")
         cat(rep("=", 70), "\n\n", sep = "")
+    }
+
+    germline_qc <- NULL
+    if (germline_mode) {
+        # Cancer-tuned defaults are more permissive than germline noise
+        # warrants; tighten them unless the caller explicitly overrode them.
+        if (missing(min_chromoplexy_chromosomes)) min_chromoplexy_chromosomes <- 4
+        if (missing(max_neighbors)) max_neighbors <- 2
+
+        if (verbose) cat("Germline mode: pre-filtering locally clustered breakpoints...\n")
+        germline_qc <- flag_locally_clustered_breakpoints(
+            SV.sample, window = germline_artifact_window, min_count = germline_artifact_min_count
+        )
+        if (length(germline_qc$flagged_sv_ids) > 0) {
+            keep <- !(SV.sample@sv_id %in% germline_qc$flagged_sv_ids)
+            if (verbose) {
+                cat(sprintf(
+                    "  Removed %d/%d SVs at %d locally clustered loci (likely repeat/mapping artifacts).\n",
+                    sum(!keep), length(keep), nrow(germline_qc$clusters)
+                ))
+            }
+            SV.sample <- SVs(
+                chrom1 = SV.sample@chrom1[keep], pos1 = SV.sample@pos1[keep],
+                chrom2 = SV.sample@chrom2[keep], pos2 = SV.sample@pos2[keep],
+                SVtype = SV.sample@SVtype[keep], strand1 = SV.sample@strand1[keep],
+                strand2 = SV.sample@strand2[keep], sv_id = SV.sample@sv_id[keep]
+            )
+        } else if (verbose) {
+            cat("  No locally clustered breakpoints found.\n")
+        }
     }
 
     cnv_n <- if (is.null(CNV.sample)) {
@@ -124,7 +177,9 @@ detect_chromoanagenesis <- function(SV.sample,
         limitations = if (cnv_available) character(0) else c(
             "CNV not provided: chromothripsis and chromoanasynthesis were not evaluated.",
             "Chromoplexy evidence does not include CN stability or deletion bridge support."
-        )
+        ),
+        germline_mode = germline_mode,
+        germline_qc = germline_qc
     )
 
     # 1. Data quality check
@@ -448,6 +503,15 @@ print.chromoanagenesis <- function(x, ...) {
         cat(sprintf("  - Total regions:   %d\n", x$chromoanasynthesis$total_regions))
         cat(sprintf("  - Chromosomes:     %s\n",
                    x$integrated_summary$chromoanasynthesis_chromosomes))
+        cat("\n")
+    }
+
+    # Germline mode QC
+    if (isTRUE(x$germline_mode) && !is.null(x$germline_qc)) {
+        n_flagged <- length(x$germline_qc$flagged_sv_ids)
+        n_clusters <- if (!is.null(x$germline_qc$clusters)) nrow(x$germline_qc$clusters) else 0
+        cat("GERMLINE MODE:\n")
+        cat(sprintf("  - Locally clustered breakpoints removed: %d (at %d loci)\n", n_flagged, n_clusters))
         cat("\n")
     }
 
